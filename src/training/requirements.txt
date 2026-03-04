@@ -1,0 +1,6 @@
+zarr
+numpy
+torch
+torchvision
+transformers
+accelerate
