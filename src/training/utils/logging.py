@@ -1,4 +1,5 @@
 import os
+import tempfile
 from datetime import datetimes
 import wandb
 
@@ -14,6 +15,15 @@ def get_exp_name(seed):
     exp_name += f'{datetime.now().strftime("%Y%m%d_%H%M%S")}'
 
     return exp_name
+
+
+def get_flag_dict():
+    """Return the dictionary of flags."""
+    flag_dict = {k: getattr(flags.FLAGS, k) for k in flags.FLAGS if '.' not in k}
+    for k in flag_dict:
+        if isinstance(flag_dict[k], ml_collections.ConfigDict):
+            flag_dict[k] = flag_dict[k].to_dict()
+    return flag_dict
 
 
 def setup_wandb(
