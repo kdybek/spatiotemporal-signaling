@@ -1,6 +1,9 @@
-zarr
+h5py
 numpy
 torch
 torchvision
 transformers
 accelerate
+absl-py
+wandb
+ml-collections

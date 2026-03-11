@@ -1,31 +1,24 @@
-import zarr
-import torch
+import h5py
 import numpy as np
+from torch.utils.data import Dataset
 
 
 class N5VideoDataset(Dataset):
     def __init__(
         self,
-        n5_path,
-        dataset_key="clips",
+        h5_path,
+        dataset_key="videos",
         num_frames=16,
-        transform=None
     ):
-        self.store = zarr.N5Store(n5_path)
-        self.root = zarr.open(self.store, mode="r")
+        self.root = h5py.File(h5_path, "r")
         self.dataset_key = dataset_key
         self.num_frames = num_frames
-        self.transform = transform
-
-        # assume videos are stored as clips/<video_id>
-        self.video_keys = list(self.root[self.dataset_key].keys())
 
     def __len__(self):
-        return len(self.video_keys)
+        return self.root[self.dataset_key].shape[0]
 
     def __getitem__(self, idx):
-        key = self.video_keys[idx]
-        video = self.root[f"{self.dataset_key}/{key}"][:]  # (T,C,H,W)
+        video = self.root[self.dataset_key][idx, ...]  # (T,C,H,W)
 
         T = video.shape[0]
 
@@ -39,7 +32,6 @@ class N5VideoDataset(Dataset):
             pad_frames = np.repeat(video[-1:], pad, axis=0)
             video = np.concatenate([video, pad_frames], axis=0)
 
-        if self.transform:
-            video = torch.stack([self.transform(frame) for frame in video])
+        video = video.astype(np.float32) / 255.0  # Normalize to [0,1]
 
         return video
