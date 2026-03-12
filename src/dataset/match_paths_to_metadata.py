@@ -29,7 +29,6 @@ def find_metadata(exp_df, tiff_filename, tiff_full_path):
         if not row.empty:
             if len(row) > 1:
                 logging.warning(f"Multiple metadata entries found for position {position} in {tiff_full_path}.")
-                return None
 
             return row.iloc[0].to_dict()
         else:
@@ -47,7 +46,6 @@ def find_metadata(exp_df, tiff_filename, tiff_full_path):
         if not row.empty:
             if len(row) > 1:
                 logging.warning(f"Multiple metadata entries found for well {well_id} in {tiff_full_path}.")
-                return None
 
             return row.iloc[0].to_dict()
         else:
@@ -92,3 +90,4 @@ if __name__ == "__main__":
         get_data_from_dir(source_directory, container)
 
     container.close()
+    logging.info(f"Matching completed. Total matched entries: {len(container)}.")
