@@ -15,16 +15,18 @@ SOURCE_DIRS = [
 
 
 def find_metadata(exp_df, tiff_filename, tiff_full_path):
-    pattern1 = re.compile(r"^(\d{2})(?:_Ori)?\.tiff?$")  # First checks for "01.tif" or "01_Ori.tif" etc.
+    pattern1 = re.compile(r"^(\d+)(?:_Ori)?\.tiff?$")  # First checks for "01.tif" or "01_Ori.tif" etc.
     pattern2 = re.compile(r"^Well([A-Z]\d).*\.tiff?$")  # Then checks for "WellA2[...].tiff" etc.
 
     if match := pattern1.match(tiff_filename):
         position = int(match.group(1))
-        try:
-            row = exp_df[exp_df["Position"] == position]
-        except KeyError:
-            logging.warning(f"'Position' column not found in experiment description: {tiff_full_path}.")
+        col_name = "Position" if "Position" in exp_df.columns else "Site" if "Site" in exp_df.columns else None
+
+        if col_name is None:
+            logging.warning(f"Neither 'Position' nor 'Site' column found in experiment description: {tiff_full_path}.")
             return None
+
+        row = exp_df[exp_df[col_name] == position]
 
         if not row.empty:
             if len(row) > 1:
