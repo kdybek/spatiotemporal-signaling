@@ -19,7 +19,11 @@ def find_metadata(exp_df, tiff_filename, tiff_full_path):
 
     if match := pattern1.match(tiff_filename):
         position = int(match.group(1))
-        row = exp_df[exp_df["Position"] == position]
+        try:
+            row = exp_df[exp_df["Position"] == position]
+        except KeyError:
+            logging.warning(f"'Position' column not found in experiment description: {tiff_full_path}.")
+            return None
 
         if not row.empty:
             return row.iloc[0].to_dict()
