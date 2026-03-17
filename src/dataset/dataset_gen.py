@@ -2,6 +2,7 @@ import argparse
 import pickle
 import os
 
+from numcodecs import Blosc
 import zarr
 import tifffile as tiff
 import numpy as np
@@ -42,7 +43,7 @@ def create_zarr_dataset(items, out_path):
     root = zarr.open(out_path, mode='w')
     root.attrs['num_videos'] = len(items)
 
-    compressor = zarr.Blosc(cname='zstd', clevel=3, shuffle=2)
+    compressor = Blosc(cname='zstd', clevel=3, shuffle=2)
 
     for i, item in enumerate(tqdm(items)):
         path = item["tiff_path"]
