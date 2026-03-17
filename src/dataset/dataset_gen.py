@@ -2,7 +2,6 @@ import argparse
 import pickle
 import os
 
-from numcodecs import Blosc
 import zarr
 import tifffile as tiff
 import numpy as np
@@ -58,9 +57,9 @@ def create_zarr_dataset(items, out_path):
         group = root.create_group(f"video_{i:05d}")
 
         group.create_array(
-            "data",
+            name="data",
             data=video,
-            compressor=compressors
+            compressors=compressors
         )
 
         # attach metadata
