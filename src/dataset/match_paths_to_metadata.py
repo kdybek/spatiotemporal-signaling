@@ -2,7 +2,7 @@ import pandas as pd
 from pathlib import Path
 import re
 import logging
-from utils.containers import BufferedPickleContainer
+import pickle
 
 
 SOURCE_DIRS = [
@@ -58,8 +58,9 @@ def find_metadata(exp_df, tiff_filename, tiff_full_path):
     return None
 
 
-def get_data_from_dir(main_dir, container):
+def get_data_from_dir(main_dir):
     root = Path(main_dir)
+    data = []
 
     for subdir in root.iterdir():
         if subdir.is_dir():
@@ -73,23 +74,30 @@ def get_data_from_dir(main_dir, container):
                     metadata = find_metadata(df, tiff_path.name, tiff_path)
 
                     if metadata is not None:
-                        container.add({
+                        data.append({
                             "tiff_path": str(tiff_path),
                             "metadata": metadata
                         })
 
+    return data
 
-if __name__ == "__main__":
-    container = BufferedPickleContainer("matched_data.pkl")
 
+def main():
     logging.basicConfig(
         filename="matching.log",
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s"
     )
 
+    data = []
     for source_directory in SOURCE_DIRS:
-        get_data_from_dir(source_directory, container)
+        data.extend(get_data_from_dir(source_directory))
 
-    container.close()
-    logging.info(f"Matching completed. Total matched entries: {len(container)}.")
+    logging.info(f"Matching completed. Total matched entries: {len(data)}.")
+
+    with open("matched.pkl", "wb") as f:
+        pickle.dump(data, f)
+
+
+if __name__ == "__main__":
+    main()
