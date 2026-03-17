@@ -43,11 +43,11 @@ def create_zarr_dataset(items, out_path):
     root = zarr.open(out_path, mode='w')
     root.attrs['num_videos'] = len(items)
 
-    compressor = Blosc(cname='zstd', clevel=3, shuffle=2)
-
     for i, item in enumerate(tqdm(items)):
         path = item["tiff_path"]
         meta = item["metadata"]
+
+        compressors = zarr.codecs.BloscCodec(cname='zstd', clevel=3, shuffle=zarr.codecs.BloscShuffle.bitshuffle)
 
         if not os.path.exists(path):
             raise FileNotFoundError(f"Missing file: {path}")
@@ -57,16 +57,11 @@ def create_zarr_dataset(items, out_path):
 
         group = root.create_group(f"video_{i:05d}")
 
-        T_chunk = min(16, T)  # chunk along time dimension
-        z = group.create_dataset(
+        group.create_array(
             "data",
-            shape=(T, C, H, W),
-            chunks=(T_chunk, C, H, W),
-            dtype=video.dtype,
-            compressor=compressor
+            data=video,
+            compressor=compressors
         )
-
-        z[:] = video
 
         # attach metadata
         group.attrs.update(meta)
