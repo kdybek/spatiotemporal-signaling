@@ -1,5 +1,5 @@
-import pandas as pd
 from pathlib import Path
+import pandas as pd
 import re
 import logging
 import pickle
@@ -17,9 +17,9 @@ SOURCE_DIRS = [
 
 def has_well_but_is_edge_case(full_tiff_path):
     EDGE_CASES = [
-        "/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_RSK/2021-03-05_MCF10A-WT_ERKKTR-GEM_RSK-inhibitors-combinations_UOplusSL/",
-        "/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_Geminin-Drugs/2020-07-06_E545KandH1047R_Geminin_ERK_drugs/",
-        "/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_Geminin-Drugs/2020-07-10_E545KandH1047R_Geminin_ERK_drugs/"
+        "/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_RSK/2021-03-05_MCF10A-WT_ERKKTR-GEM_RSK-inhibitors-combinations_UOplusSL",
+        "/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_Geminin-Drugs/2020-07-06_E545KandH1047R_Geminin_ERK_drugs",
+        "/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_Geminin-Drugs/2020-07-10_E545KandH1047R_Geminin_ERK_drugs"
     ]
     exp_path = os.path.dirname(os.path.dirname(full_tiff_path))
 
