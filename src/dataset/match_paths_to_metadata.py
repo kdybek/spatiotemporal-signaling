@@ -3,7 +3,10 @@ import pandas as pd
 import re
 import logging
 import pickle
-import os
+
+
+VALID_COUNT = 0
+ERKKTR_COUNT = 0
 
 
 SOURCE_DIRS = [
@@ -21,12 +24,33 @@ def has_well_but_is_edge_case(full_tiff_path):
         "/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_Geminin-Drugs/2020-07-06_E545KandH1047R_Geminin_ERK_drugs",
         "/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_Geminin-Drugs/2020-07-10_E545KandH1047R_Geminin_ERK_drugs"
     ]
-    exp_path = os.path.dirname(os.path.dirname(full_tiff_path))
+
+    exp_path = full_tiff_path.parent.parent
 
     if exp_path in EDGE_CASES:
         return True
     else:
         return False
+
+
+def is_ERKKTR(exp_name):
+    ERKKTR_PATTERN = re.compile(r"ERKKTR", re.IGNORECASE)
+    return bool(ERKKTR_PATTERN.search(exp_name))
+
+
+def extract_zoom_from_exp_name(exp_name):
+    zoom_pattern = re.compile(r"\d+x")
+    zoom_matches = zoom_pattern.findall(exp_name)
+
+    if zoom_matches:
+        if len(zoom_matches) > 1:
+            logging.warning(f"Multiple zoom levels found in experiment name '{exp_name}'. Using the first one.")
+            return zoom_matches[0]  # Return the first match, but log a warning
+        else:
+            return zoom_matches[0]
+    else:
+        logging.warning(f"No zoom level found in experiment name '{exp_name}'.")
+        return ""
 
 
 def find_metadata_position(exp_df, tiff_filename, tiff_full_path):
@@ -111,6 +135,8 @@ def find_metadata(exp_df, tiff_filename, tiff_full_path):
 
 
 def get_data_from_dir(main_dir):
+    global VALID_COUNT, ERKKTR_COUNT
+
     root = Path(main_dir)
     data = []
 
@@ -129,12 +155,20 @@ def get_data_from_dir(main_dir):
             logging.info(f"Experiment description file not found: {exp_desc_file}. Skipping {subdir}.")
             continue
 
+        zoom_level = extract_zoom_from_exp_name(subdir.name)
+        ERKKTR_status = is_ERKKTR(subdir.name)
         df = pd.read_csv(exp_desc_file, sep=None, engine="python")
+        VALID_COUNT += 1
+        if ERKKTR_status:
+            ERKKTR_COUNT += 1
 
         for tiff_path in tiff_dir.glob("*.tif*"):
             metadata = find_metadata(df, tiff_path.name, tiff_path)
 
             if metadata is not None:
+                metadata["Experiment"] = subdir.name
+                metadata["ERKKTR"] = int(ERKKTR_status)
+                metadata["Zoom"] = zoom_level
                 metadata["Tiff_path"] = str(tiff_path)
                 data.append({
                     "tiff_path": str(tiff_path),
@@ -147,7 +181,7 @@ def get_data_from_dir(main_dir):
 def main():
     logging.basicConfig(
         filename="matching.log",
-        level=logging.WARNING,
+        level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s"
     )
 
@@ -156,6 +190,8 @@ def main():
         data.extend(get_data_from_dir(source_directory))
 
     logging.info(f"Matching completed. Total matched entries: {len(data)}.")
+    logging.info(f"Total valid experiments processed: {VALID_COUNT}.")
+    logging.info(f"Total ERKKTR experiments processed: {ERKKTR_COUNT}.")
 
     with open("matched.pkl", "wb") as f:
         pickle.dump(data, f)
