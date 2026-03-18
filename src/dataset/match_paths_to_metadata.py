@@ -45,6 +45,10 @@ def remove_leading_zeros_well(s):
     return s[0] + str(int(s[1:])) if len(s) > 1 else s
 
 
+def check_well_format(s):
+    return isinstance(s, str) and re.match(r"^[A-Z]\d+$", s) is not None
+
+
 def find_metadata_well(exp_df, tiff_filename, tiff_full_path):
     pattern1 = re.compile(r"^Well([A-Z]\d+).*Site(\d+).*\.tiff?$")  # For example, "WellA2_Site1.tiff"
     pattern2 = re.compile(r"^Well([A-Z]\d+)_Seq\d+_[A-Z]\d+_(\d+).*\.tiff?$")  # For example, "WellA2_Seq0000_A2_0001_WF-640.tiff"
@@ -57,6 +61,10 @@ def find_metadata_well(exp_df, tiff_filename, tiff_full_path):
         site = int(match.group(2))
     else:
         logging.warning(f"Unexpected TIFF filename format: {tiff_full_path}.")
+        return None
+
+    if not check_well_format(exp_df["Well"].iloc[0]):
+        logging.warning(f"Unexpected 'Well' format in metadata: {tiff_full_path}.")
         return None
 
     rows = exp_df[exp_df["Well"].apply(remove_leading_zeros_well) == remove_leading_zeros_well(well)]
