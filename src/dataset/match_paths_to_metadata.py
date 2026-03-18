@@ -63,7 +63,7 @@ def find_metadata_well(exp_df, tiff_filename, tiff_full_path):
         logging.warning(f"Unexpected TIFF filename format: {tiff_full_path}.")
         return None
 
-    if not check_well_format(exp_df["Well"].iloc[0]):
+    if not exp_df["Well"].apply(check_well_format).all():
         logging.warning(f"Unexpected 'Well' format in metadata: {tiff_full_path}.")
         return None
 
