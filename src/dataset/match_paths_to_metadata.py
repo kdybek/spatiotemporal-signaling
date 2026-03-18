@@ -41,6 +41,10 @@ def find_metadata_position(exp_df, tiff_filename, tiff_full_path):
         return None
 
 
+def remove_leading_zeros_well(s):
+    return s[0] + str(int(s[1:])) if len(s) > 1 else s
+
+
 def find_metadata_well(exp_df, tiff_filename, tiff_full_path):
     pattern1 = re.compile(r"^Well([A-Z]\d+).*Site(\d+).*\.tiff?$")  # For example, "WellA2_Site1.tiff"
     pattern2 = re.compile(r"^Well([A-Z]\d+)_Seq\d+_[A-Z]\d+_(\d+).*\.tiff?$")  # For example, "WellA2_Seq0000_A2_0001_WF-640.tiff"
@@ -55,7 +59,7 @@ def find_metadata_well(exp_df, tiff_filename, tiff_full_path):
         logging.warning(f"Unexpected TIFF filename format: {tiff_full_path}.")
         return None
 
-    rows = exp_df[(exp_df["Well"] == well)]
+    rows = exp_df[(remove_leading_zeros_well(exp_df["Well"]) == remove_leading_zeros_well(well))]
 
     if rows.empty:
         logging.warning(f"No matching metadata found for well {well} in {tiff_full_path}.")
