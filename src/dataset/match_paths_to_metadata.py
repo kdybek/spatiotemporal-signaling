@@ -14,48 +14,76 @@ SOURCE_DIRS = [
 ]
 
 
-def find_metadata(exp_df, tiff_filename, tiff_full_path):
-    pattern1 = re.compile(r"^(\d+)(?:_Ori)?\.tiff?$")  # First checks for "01.tif" or "01_Ori.tif" etc.
-    pattern2 = re.compile(r"^Well([A-Z]\d).*\.tiff?$")  # Then checks for "WellA2[...].tiff" etc.
+def find_metadata_position(exp_df, tiff_filename, tiff_full_path):
+    pattern = re.compile(r"^(\d+)(?:_Ori)?\.tiff?$")  # Matches "01.tif", "01_Ori.tif", etc.
+
+    if match := pattern.match(tiff_filename):
+        position = int(match.group(1))
+    else:
+        logging.warning(f"Unexpected TIFF filename format: {tiff_full_path}.")
+        return None
+
+    if "Position" in exp_df.columns and not (exp_df["Position"] == 0).all():
+        row = exp_df[exp_df["Position"] == position]
+    else:
+        logging.warning(f"'Position' column not found or all values are zero in experiment description: {tiff_full_path}.")
+        return None
+
+    if len(row) == 1:
+        return row.iloc[0].to_dict()
+    elif row.empty:
+        logging.warning(f"No matching metadata found for position {position} in {tiff_full_path}.")
+        return None
+    else:
+        logging.warning(f"Multiple metadata entries found for position {position} in {tiff_full_path}.")
+        return None
+
+
+def find_metadata_well(exp_df, tiff_filename, tiff_full_path):
+    pattern1 = re.compile(r"^Well([A-Z]\d).*Site(\d+).*\.tiff?$")  # For example, "WellA2_Site1.tiff"
+    pattern2 = re.compile(r"^Well([A-Z]\d)_Seq\d+_[A-Z]\d_(\d+).*\.tiff?$")  # For example, "WellA2_Seq0000_A2_0001_WF-640.tiff"
 
     if match := pattern1.match(tiff_filename):
-        position = int(match.group(1))
-        col_name = "Position" if "Position" in exp_df.columns else "Site" if "Site" in exp_df.columns else None
-
-        if col_name is None:
-            logging.warning(f"Neither 'Position' nor 'Site' column found in experiment description: {tiff_full_path}.")
-            return None
-
-        row = exp_df[exp_df[col_name] == position]
-
-        if not row.empty:
-            if len(row) > 1:
-                logging.warning(f"Multiple metadata entries found for position {position} in {tiff_full_path}.")
-
-            return row.iloc[0].to_dict()
-        else:
-            logging.warning(f"No matching metadata found: {tiff_full_path}.")
-            return None
-
+        well = match.group(1)
+        site = int(match.group(2))
     elif match := pattern2.match(tiff_filename):
-        well_id = match.group(1)
-        try:
-            row = exp_df[exp_df["Well"] == well_id]
-        except KeyError:
-            logging.warning(f"'Well' column not found in experiment description: {tiff_full_path}.")
-            return None
+        well = match.group(1)
+        site = int(match.group(2))
+    else:
+        logging.warning(f"Unexpected TIFF filename format: {tiff_full_path}.")
+        return None
 
-        if not row.empty:
-            if len(row) > 1:
-                logging.warning(f"Multiple metadata entries found for well {well_id} in {tiff_full_path}.")
+    rows = exp_df[(exp_df["Well"] == well)]
 
-            return row.iloc[0].to_dict()
-        else:
-            logging.warning(f"No matching metadata found: {tiff_full_path}.")
-            return None
+    if rows.empty:
+        logging.warning(f"No matching metadata found for well {well} in {tiff_full_path}.")
+        return None
 
-    logging.warning(f"Unexpected TIFF filename format: {tiff_full_path}.")
-    return None
+    if len(rows) == 1:
+        return rows.iloc[0].to_dict()
+    elif "Site" in exp_df.columns:
+        row = rows[rows["Site"] == site]
+    elif "Position" in exp_df.columns and not (exp_df["Position"] == 0).all():
+        row = rows[rows["Position"] == site]
+    else:
+        logging.warning(f"Multiple metadata entries found for well {well}, but was not able to resolve them: {tiff_full_path}.")
+        return None
+
+    if len(row) == 1:
+        return row.iloc[0].to_dict()
+    elif row.empty:
+        logging.warning(f"No matching metadata found for well {well} and site/position {site} in {tiff_full_path}.")
+        return None
+    else:
+        logging.warning(f"Multiple metadata entries found for well {well} and site/position {site} in {tiff_full_path}.")
+        return None
+
+
+def find_metadata(exp_df, tiff_filename, tiff_full_path):
+    if "Well" in exp_df.columns:
+        return find_metadata_well(exp_df, tiff_filename, tiff_full_path)
+    else:
+        return find_metadata_position(exp_df, tiff_filename, tiff_full_path)
 
 
 def get_data_from_dir(main_dir):
@@ -63,21 +91,31 @@ def get_data_from_dir(main_dir):
     data = []
 
     for subdir in root.iterdir():
-        if subdir.is_dir():
-            exp_desc_file = subdir / "experimentDescription.csv"
-            tiff_dir = subdir / "TIFFs"
+        if not subdir.is_dir():
+            continue
 
-            if exp_desc_file.exists():
-                df = pd.read_csv(exp_desc_file, sep=None, engine="python")
+        exp_desc_file = subdir / "experimentDescription.csv"
+        tiff_dir = subdir / "TIFFs"
 
-                for tiff_path in tiff_dir.glob("*.tif*"):
-                    metadata = find_metadata(df, tiff_path.name, tiff_path)
+        if not tiff_dir.exists():
+            logging.warning(f"TIFF directory not found: {tiff_dir}. Skipping {subdir}.")
+            continue
 
-                    if metadata is not None:
-                        data.append({
-                            "tiff_path": str(tiff_path),
-                            "metadata": metadata
-                        })
+        if not exp_desc_file.exists():
+            logging.warning(f"Experiment description file not found: {exp_desc_file}. Skipping {subdir}.")
+            continue
+
+        df = pd.read_csv(exp_desc_file, sep=None, engine="python")
+
+        for tiff_path in tiff_dir.glob("*.tif*"):
+            metadata = find_metadata(df, tiff_path.name, tiff_path)
+
+            if metadata is not None:
+                metadata["Tiff_path"] = str(tiff_path)
+                data.append({
+                    "tiff_path": str(tiff_path),
+                    "metadata": metadata
+                })
 
     return data
 

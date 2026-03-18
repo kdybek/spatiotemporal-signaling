@@ -65,7 +65,6 @@ def create_zarr_dataset(items, out_path):
         # attach metadata
         group.attrs.update(meta)
         group.attrs['shape'] = (T, C, H, W)
-        group.attrs['source_path'] = path
 
     # important for fast loading later
     zarr.consolidate_metadata(root.store)
