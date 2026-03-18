@@ -89,10 +89,10 @@ def find_metadata_well(exp_df, tiff_filename, tiff_full_path):
 
 
 def find_metadata(exp_df, tiff_filename, tiff_full_path):
-    if "Well" in exp_df.columns:
-        return find_metadata_well(exp_df, tiff_filename, tiff_full_path)
-    else:
+    if "Well" not in exp_df.columns or exp_df["Well"].isna().all():
         return find_metadata_position(exp_df, tiff_filename, tiff_full_path)
+    else:
+        return find_metadata_well(exp_df, tiff_filename, tiff_full_path)
 
 
 def get_data_from_dir(main_dir):
