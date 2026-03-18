@@ -40,8 +40,8 @@ def find_metadata_position(exp_df, tiff_filename, tiff_full_path):
 
 
 def find_metadata_well(exp_df, tiff_filename, tiff_full_path):
-    pattern1 = re.compile(r"^Well([A-Z]\d).*Site(\d+).*\.tiff?$")  # For example, "WellA2_Site1.tiff"
-    pattern2 = re.compile(r"^Well([A-Z]\d)_Seq\d+_[A-Z]\d_(\d+).*\.tiff?$")  # For example, "WellA2_Seq0000_A2_0001_WF-640.tiff"
+    pattern1 = re.compile(r"^Well([A-Z]\d+).*Site(\d+).*\.tiff?$")  # For example, "WellA2_Site1.tiff"
+    pattern2 = re.compile(r"^Well([A-Z]\d+)_Seq\d+_[A-Z]\d+_(\d+).*\.tiff?$")  # For example, "WellA2_Seq0000_A2_0001_WF-640.tiff"
 
     if match := pattern1.match(tiff_filename):
         well = match.group(1)
@@ -98,11 +98,11 @@ def get_data_from_dir(main_dir):
         tiff_dir = subdir / "TIFFs"
 
         if not tiff_dir.exists():
-            logging.warning(f"TIFF directory not found: {tiff_dir}. Skipping {subdir}.")
+            logging.info(f"TIFF directory not found: {tiff_dir}. Skipping {subdir}.")
             continue
 
         if not exp_desc_file.exists():
-            logging.warning(f"Experiment description file not found: {exp_desc_file}. Skipping {subdir}.")
+            logging.info(f"Experiment description file not found: {exp_desc_file}. Skipping {subdir}.")
             continue
 
         df = pd.read_csv(exp_desc_file, sep=None, engine="python")
@@ -123,7 +123,7 @@ def get_data_from_dir(main_dir):
 def main():
     logging.basicConfig(
         filename="matching.log",
-        level=logging.INFO,
+        level=logging.WARNING,
         format="%(asctime)s - %(levelname)s - %(message)s"
     )
 
