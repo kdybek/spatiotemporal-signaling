@@ -59,7 +59,7 @@ def find_metadata_well(exp_df, tiff_filename, tiff_full_path):
         logging.warning(f"Unexpected TIFF filename format: {tiff_full_path}.")
         return None
 
-    rows = exp_df[(remove_leading_zeros_well(exp_df["Well"]) == remove_leading_zeros_well(well))]
+    rows = exp_df[exp_df["Well"].apply(remove_leading_zeros_well) == remove_leading_zeros_well(well)]
 
     if rows.empty:
         logging.warning(f"No matching metadata found for well {well} in {tiff_full_path}.")
