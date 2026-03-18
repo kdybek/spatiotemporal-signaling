@@ -42,11 +42,10 @@ def find_metadata_position(exp_df, tiff_filename, tiff_full_path):
 
 
 def remove_leading_zeros_well(s):
-    return s[0] + str(int(s[1:])) if len(s) > 1 else s
-
-
-def check_well_format(s):
-    return isinstance(s, str) and re.match(r"^[A-Z]\d+$", s) is not None
+    if isinstance(s, str) and len(s) > 1 and s[0].isalpha() and s[1:].isdigit():
+        return s[0] + str(int(s[1:])) if len(s) > 1 else s
+    else:
+        return "well, well, well..."  # Return a string that will not match any valid well name
 
 
 def find_metadata_well(exp_df, tiff_filename, tiff_full_path):
@@ -61,10 +60,6 @@ def find_metadata_well(exp_df, tiff_filename, tiff_full_path):
         site = int(match.group(2))
     else:
         logging.warning(f"Unexpected TIFF filename format: {tiff_full_path}.")
-        return None
-
-    if not exp_df["Well"].apply(check_well_format).all():
-        logging.warning(f"Unexpected 'Well' format in metadata: {tiff_full_path}.")
         return None
 
     rows = exp_df[exp_df["Well"].apply(remove_leading_zeros_well) == remove_leading_zeros_well(well)]
