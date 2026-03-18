@@ -3,6 +3,7 @@ from pathlib import Path
 import re
 import logging
 import pickle
+import os
 
 
 SOURCE_DIRS = [
@@ -12,6 +13,20 @@ SOURCE_DIRS = [
     "/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_RSK",
     "/mnt/imaging.data/pgagliardi/MDCK_TimeLapse",
 ]
+
+
+def has_well_but_is_edge_case(full_tiff_path):
+    EDGE_CASES = [
+        "/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_RSK/2021-03-05_MCF10A-WT_ERKKTR-GEM_RSK-inhibitors-combinations_UOplusSL/",
+        "/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_Geminin-Drugs/2020-07-06_E545KandH1047R_Geminin_ERK_drugs/",
+        "/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_Geminin-Drugs/2020-07-10_E545KandH1047R_Geminin_ERK_drugs/"
+    ]
+    exp_path = os.path.dirname(os.path.dirname(full_tiff_path))
+
+    if exp_path in EDGE_CASES:
+        return True
+    else:
+        return False
 
 
 def find_metadata_position(exp_df, tiff_filename, tiff_full_path):
@@ -89,7 +104,7 @@ def find_metadata_well(exp_df, tiff_filename, tiff_full_path):
 
 
 def find_metadata(exp_df, tiff_filename, tiff_full_path):
-    if "Well" not in exp_df.columns or exp_df["Well"].isna().all():
+    if "Well" not in exp_df.columns or exp_df["Well"].isna().all() or has_well_but_is_edge_case(tiff_full_path):
         return find_metadata_position(exp_df, tiff_filename, tiff_full_path)
     else:
         return find_metadata_well(exp_df, tiff_filename, tiff_full_path)
