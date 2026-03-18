@@ -15,7 +15,7 @@ SOURCE_DIRS = [
 
 
 def find_metadata_position(exp_df, tiff_filename, tiff_full_path):
-    pattern = re.compile(r"^(\d+)(?:_Ori)?\.tiff?$")  # Matches "01.tif", "01_Ori.tif", etc.
+    pattern = re.compile(r"^(?:Series_?)?(\d+)(?:_Ori)?\.tiff?$")  # Matches "01.tif", "01_Ori.tif", etc.
 
     if match := pattern.match(tiff_filename):
         position = int(match.group(1))
