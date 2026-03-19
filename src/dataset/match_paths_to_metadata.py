@@ -14,6 +14,9 @@ SOURCE_DIRS = [
 ]
 
 
+WITH_CHANNEL = 0
+
+
 def has_well_but_is_edge_case(full_tiff_path):
     EDGE_CASES = [
         "/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_RSK/2021-03-05_MCF10A-WT_ERKKTR-GEM_RSK-inhibitors-combinations_UOplusSL",
@@ -27,6 +30,11 @@ def has_well_but_is_edge_case(full_tiff_path):
         return True
     else:
         return False
+
+
+def has_channels(tiff_filename):
+    CHANNEL_PATTERN = re.compile(r"C\d", re.IGNORECASE)
+    return bool(CHANNEL_PATTERN.search(tiff_filename))
 
 
 def is_ERKKTR(exp_name):
@@ -118,6 +126,7 @@ def find_metadata(exp_df, tiff_filename, tiff_full_path):
 def get_data_from_dir(main_dir):
     root = Path(main_dir)
     data = []
+    global WITH_CHANNEL
 
     for subdir in root.iterdir():
         if not subdir.is_dir():
@@ -138,6 +147,8 @@ def get_data_from_dir(main_dir):
 
         for tiff_path in tiff_dir.glob("*.tif*"):
             metadata = find_metadata(df, tiff_path.name, tiff_path)
+            if has_channels(tiff_path.name):
+                WITH_CHANNEL += 1
 
             if metadata is not None:
                 metadata["Experiment"] = subdir.name
@@ -162,6 +173,7 @@ def main():
         data.extend(get_data_from_dir(source_directory))
 
     logging.info(f"Matching completed. Total matched entries: {len(data)}.")
+    logging.info(f"Total TIFF files with channels in their names: {WITH_CHANNEL}.")
 
     with open("matched.pkl", "wb") as f:
         pickle.dump(data, f)
