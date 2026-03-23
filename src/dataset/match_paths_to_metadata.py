@@ -3,18 +3,7 @@ import pandas as pd
 import re
 import logging
 import pickle
-
-
-SOURCE_DIRS = [
-    "/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse",
-    "/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_Chemotherapy",
-    "/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_Geminin-Drugs",
-    "/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_RSK",
-    "/mnt/imaging.data/pgagliardi/MDCK_TimeLapse",
-]
-
-
-WITH_CHANNEL = 0
+import argparse
 
 
 def has_well_but_is_edge_case(full_tiff_path):
@@ -30,16 +19,6 @@ def has_well_but_is_edge_case(full_tiff_path):
         return True
     else:
         return False
-
-
-def has_channels(tiff_filename):
-    CHANNEL_PATTERN = re.compile(r"C\d", re.IGNORECASE)
-    return bool(CHANNEL_PATTERN.search(tiff_filename))
-
-
-def is_ERKKTR(exp_name):
-    ERKKTR_PATTERN = re.compile(r"ERKKTR", re.IGNORECASE)
-    return bool(ERKKTR_PATTERN.search(exp_name))
 
 
 def find_metadata_position(exp_df, tiff_filename, tiff_full_path):
@@ -123,10 +102,27 @@ def find_metadata(exp_df, tiff_filename, tiff_full_path):
         return find_metadata_well(exp_df, tiff_filename, tiff_full_path)
 
 
-def get_data_from_dir(main_dir):
+def get_all_channels(tiff_name, tiff_dir):
+    base_name = re.sub(r"C[123]", "", tiff_name)
+    all_channels = list(tiff_dir.glob(f"{base_name}"))
+    return all_channels
+
+
+def channel_type(tiff_name):
+    if "C1" in tiff_name:
+        return "C1"
+    elif "C2" in tiff_name:
+        return "C2"
+    elif "C3" in tiff_name:
+        return "C3"
+    else:
+        return "AllChannels"
+
+
+def get_data_from_dir(main_dir, exp_metadata):
     root = Path(main_dir)
     data = []
-    global WITH_CHANNEL
+    used = set()  # To track used TIFF paths and avoid duplicates, I need this to handle split channels
 
     for subdir in root.iterdir():
         if not subdir.is_dir():
@@ -146,22 +142,48 @@ def get_data_from_dir(main_dir):
         df = pd.read_csv(exp_desc_file, sep=None, engine="python")
 
         for tiff_path in tiff_dir.glob("*.tif*"):
+            if str(tiff_path) in used:
+                continue
+
             metadata = find_metadata(df, tiff_path.name, tiff_path)
-            if has_channels(tiff_path.name):
-                WITH_CHANNEL += 1
+            metadata.update(exp_metadata)  # Add experiment-level metadata to the TIFF metadata
 
             if metadata is not None:
+                all_channels = get_all_channels(tiff_path.name, tiff_dir)
+
                 metadata["Experiment"] = subdir.name
                 metadata["Tiff_path"] = str(tiff_path)
-                data.append({
-                    "tiff_path": str(tiff_path),
-                    "metadata": metadata
-                })
+
+                entry = {"metadata": metadata}
+
+                for channel_path in all_channels:
+                    used.add(str(channel_path))
+                    entry[channel_type(channel_path.name)] = str(channel_path)
+
+                data.append(entry)
 
     return data
 
 
 def main():
+    parser = argparse.ArgumentParser(
+        description="Match TIFF file paths to their corresponding metadata from experiment description CSVs, and save the results in a PKL file."
+    )
+
+    parser.add_argument(
+        "--input",
+        required=True,
+        help="Path to CSV file containing list of experiments with 'Path' and metadata columns"
+    )
+
+    parser.add_argument(
+        "--output",
+        required=True,
+        help="Output PKL file to save list of {'tiff_path','metadata'} dicts"
+    )
+
+    args = parser.parse_args()
+
     logging.basicConfig(
         filename="matching.log",
         level=logging.INFO,
@@ -169,13 +191,15 @@ def main():
     )
 
     data = []
-    for source_directory in SOURCE_DIRS:
-        data.extend(get_data_from_dir(source_directory))
+    data_df = pd.read_csv(args.input).dropna(subset=["Path"])
+    for _, row in data_df[data_df["Usable"] == "T"].iterrows():
+        source_directory = row["Path"]
+        exp_metadata = row.drop(["Path"]).dropna().to_dict()
+        data.extend(get_data_from_dir(source_directory, exp_metadata))
 
     logging.info(f"Matching completed. Total matched entries: {len(data)}.")
-    logging.info(f"Total TIFF files with channels in their names: {WITH_CHANNEL}.")
 
-    with open("matched.pkl", "wb") as f:
+    with open(args.output, "wb") as f:
         pickle.dump(data, f)
 
 

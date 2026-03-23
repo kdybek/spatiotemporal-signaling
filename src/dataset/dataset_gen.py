@@ -78,7 +78,7 @@ def main():
     parser.add_argument(
         "--input",
         required=True,
-        help="Path to .pkl file containing list of {'path','metadata'} dicts"
+        help="Path to PKL file containing list of {'path','metadata'} dicts"
     )
 
     parser.add_argument(
