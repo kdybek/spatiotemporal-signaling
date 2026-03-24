@@ -6,14 +6,14 @@ import pickle
 import argparse
 
 
-def has_well_but_is_edge_case(full_tiff_path):
+def has_well_but_is_edge_case(exp_path):
     EDGE_CASES = [
         "/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_RSK/2021-03-05_MCF10A-WT_ERKKTR-GEM_RSK-inhibitors-combinations_UOplusSL",
         "/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_Geminin-Drugs/2020-07-06_E545KandH1047R_Geminin_ERK_drugs",
         "/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_Geminin-Drugs/2020-07-10_E545KandH1047R_Geminin_ERK_drugs"
     ]
 
-    exp_path_str = str(full_tiff_path.parent.parent)
+    exp_path_str = str(exp_path)
 
     if exp_path_str in EDGE_CASES:
         return True
@@ -21,43 +21,60 @@ def has_well_but_is_edge_case(full_tiff_path):
         return False
 
 
-def find_metadata_position(exp_df, tiff_filename, tiff_full_path):
-    pattern = re.compile(r"^(?:C\d_?)?(?:[Ss]eries_?)?(\d+)(?:_[Oo]ri)?\.tiff?$")  # Matches "01.tif", "01_Ori.tif", etc.
-
-    if match := pattern.match(tiff_filename):
-        position = int(match.group(1))
-    else:
-        logging.warning(f"Unexpected TIFF filename format: {tiff_full_path}.")
-        return None
-
-    if "Site" in exp_df.columns:
-        row = exp_df[exp_df["Site"] == position]
-    elif "Position" in exp_df.columns and not (exp_df["Position"] == 0).all():
-        row = exp_df[exp_df["Position"] == position]
-    else:
-        logging.warning(f"Neither 'Site' nor 'Position' column found in metadata: {tiff_full_path}.")
-        return None
-
-    if len(row) == 1:
-        return row.iloc[0].to_dict()
-    elif row.empty:
-        logging.warning(f"No matching metadata found for position {position} in {tiff_full_path}.")
-        return None
-    else:
-        logging.warning(f"Multiple metadata entries found for position {position} in {tiff_full_path}.")
-        return None
-
-
 def remove_leading_zeros_well(s):
     if isinstance(s, str) and len(s) > 1 and s[0].isalpha() and s[1:].isdigit():
         return s[0] + str(int(s[1:])) if len(s) > 1 else s
     else:
-        return "well, well, well..."  # Return a string that will not match any valid well name
+        return None
 
 
-def find_metadata_well(exp_df, tiff_filename, tiff_full_path):
+def preprocess_exp_desc_df(df, exp_path):
+    # Drop columns with empty names
+    df = df.loc[:, df.columns.notna() & (df.columns != "")]
+
+    # Drop rows where all values are empty (NaN or "")
+    df = df.replace("", pd.NA).dropna(how="all")
+
+    if "Well" not in df.columns or df["Well"].isna().all() or has_well_but_is_edge_case(exp_path):
+        if "Site" in df.columns and not df.duplicated(subset=["Site"]).any():
+            key = ["Site"]
+        elif "Position" in df.columns and not df.duplicated(subset=["Position"]).any():
+            key = ["Position"]
+        else:
+            raise ValueError("No key found for experiment description.")
+    else:
+        df = df[df["Well"].apply(remove_leading_zeros_well) is not None]  # Filter out rows with invalid well names
+        if not df.duplicated(subset=["Well"]).any():
+            key = ["Well"]
+        if "Site" in df.columns and not df.duplicated(subset=["Well", "Site"]).any():
+            key = ["Well", "Site"]
+        elif "Position" in df.columns and not df.duplicated(subset=["Well", "Position"]).any():
+            key = ["Well", "Position"]
+        else:
+            raise ValueError("No key found for experiment description.")
+
+    return df, key
+
+
+def preprocess_tiff_pos(tiff_path):
+    pattern = re.compile(r"^(?:C\d_?)?(?:[Ss]eries_?)?(\d+)(?:_[Oo]ri)?\.tiff?$")  # Matches "01.tif", "01_Ori.tif", etc.
+    tiff_filename = tiff_path.name
+
+    if match := pattern.match(tiff_filename):
+        position = int(match.group(1))
+    else:
+        raise ValueError(f"Unexpected TIFF filename format: {tiff_path}.")
+
+    return {
+        "Path": str(tiff_path),
+        "Desc": (position,),
+    }
+
+
+def preprocess_tiff_well(tiff_path, just_well):
     pattern1 = re.compile(r"^Well([A-Z]\d+).*Site(\d+).*\.tiff?$")  # For example, "WellA2_Site1.tiff"
     pattern2 = re.compile(r"^Well([A-Z]\d+)_Seq\d+_[A-Z]\d+_(\d+).*\.tiff?$")  # For example, "WellA2_Seq0000_A2_0001_WF-640.tiff"
+    tiff_filename = tiff_path.name
 
     if match := pattern1.match(tiff_filename):
         well = match.group(1)
@@ -66,101 +83,112 @@ def find_metadata_well(exp_df, tiff_filename, tiff_full_path):
         well = match.group(1)
         site = int(match.group(2))
     else:
-        logging.warning(f"Unexpected TIFF filename format: {tiff_full_path}.")
-        return None
+        raise ValueError(f"Unexpected TIFF filename format: {tiff_path}.")
 
-    rows = exp_df[exp_df["Well"].apply(remove_leading_zeros_well) == remove_leading_zeros_well(well)]
+    well = remove_leading_zeros_well(well)
 
-    if rows.empty:
-        logging.warning(f"No matching metadata found for well {well} in {tiff_full_path}.")
-        return None
+    desc = (well,) if just_well else (well, site)
 
-    if len(rows) == 1:
-        return rows.iloc[0].to_dict()
-    elif "Site" in exp_df.columns:
-        row = rows[rows["Site"] == site]
-    elif "Position" in exp_df.columns and not (exp_df["Position"] == 0).all():
-        row = rows[rows["Position"] == site]
+    return {
+        "Path": tiff_path,
+        "Desc": desc,
+    }
+
+
+def preprocess_tiff(tiff_path, key):
+    if key == ["Site"] or key == ["Position"]:
+        return preprocess_tiff_pos(tiff_path)
+    elif key == ["Well"]:
+        return preprocess_tiff_well(tiff_path, just_well=True)
+    elif key == ["Well", "Site"] or key == ["Well", "Position"]:
+        return preprocess_tiff_well(tiff_path, just_well=False)
     else:
-        logging.warning(f"Multiple metadata entries found for well {well}, but was not able to resolve them: {tiff_full_path}.")
-        return None
+        raise ValueError(f"Unsupported key: {key}")
 
-    if len(row) == 1:
-        return row.iloc[0].to_dict()
-    elif row.empty:
-        logging.warning(f"No matching metadata found for well {well} and site/position {site} in {tiff_full_path}.")
-        return None
+
+def process_split_channel_matched_tiffs(tiff_paths, exp_metadata):
+    channels = [k for k in exp_metadata if k.startswith("Ch_")]
+
+    channel_metadata = {}
+    channel_mapping = {}
+
+    counter = 1
+    for channel in channels:
+        channel_pattern = exp_metadata[channel]
+        channel_tiffs = [tiff for tiff in tiff_paths if channel_pattern in str(tiff.name)]
+
+        if len(channel_tiffs) == 0:
+            raise ValueError(f"No TIFF found matching pattern '{channel_pattern}' for channel {channel}.")
+        elif len(channel_tiffs) > 1:
+            raise ValueError(f"Multiple TIFFs found matching pattern '{channel_pattern}' for channel {channel}: {channel_tiffs}.")
+
+        channel_metadata[f"C{counter}"] = channel
+        channel_mapping[f"C{counter}"] = str(channel_tiffs[0])
+        counter += 1
+
+    return channel_mapping, channel_metadata
+
+
+def process_non_split_channel_matched_tiffs(tiff_paths, exp_metadata):
+    if len(tiff_paths) != 1:
+        raise ValueError(f"Expected exactly one TIFF path for non-split-channel experiment, but got {tiff_paths}.")
+
+    channel_mapping = {"All_channels": str(tiff_paths[0])}
+
+    channels = [k for k in exp_metadata if k.startswith("Ch_")]
+
+    channel_metadata = {}
+
+    for channel in channels:
+        channel_num = exp_metadata[channel]
+        channel_metadata[f"C{channel_num}"] = channel
+
+    return channel_mapping, channel_metadata
+
+
+def process_matched_tiffs(tiff_paths, exp_metadata):
+    if exp_metadata.get("Split_channels", "F") == "T":
+        return process_split_channel_matched_tiffs(tiff_paths, exp_metadata)
     else:
-        logging.warning(f"Multiple metadata entries found for well {well} and site/position {site} in {tiff_full_path}.")
-        return None
+        return process_non_split_channel_matched_tiffs(tiff_paths, exp_metadata)
 
 
-def find_metadata(exp_df, tiff_filename, tiff_full_path):
-    if "Well" not in exp_df.columns or exp_df["Well"].isna().all() or has_well_but_is_edge_case(tiff_full_path):
-        return find_metadata_position(exp_df, tiff_filename, tiff_full_path)
-    else:
-        return find_metadata_well(exp_df, tiff_filename, tiff_full_path)
-
-
-def get_all_channels(tiff_name, tiff_dir):
-    base_name = re.sub(r"C[123]", "", tiff_name)
-    all_channels = list(tiff_dir.glob(f"{base_name}"))
-    return all_channels
-
-
-def channel_type(tiff_name):
-    if "C1" in tiff_name:
-        return "C1"
-    elif "C2" in tiff_name:
-        return "C2"
-    elif "C3" in tiff_name:
-        return "C3"
-    else:
-        return "AllChannels"
-
-
-def get_data_from_dir(main_dir, exp_metadata):
-    root = Path(main_dir)
+def get_data_from_exp(exp_path, exp_metadata):
     data = []
-    used = set()  # To track used TIFF paths and avoid duplicates, I need this to handle split channels
 
-    for subdir in root.iterdir():
-        if not subdir.is_dir():
-            continue
+    exp_desc_file = exp_path / "experimentDescription.csv"
+    tiff_dir = exp_path / "TIFFs"
 
-        exp_desc_file = subdir / "experimentDescription.csv"
-        tiff_dir = subdir / "TIFFs"
+    if not tiff_dir.exists():
+        raise FileNotFoundError(f"TIFF directory not found: {tiff_dir}.")
 
-        if not tiff_dir.exists():
-            logging.info(f"TIFF directory not found: {tiff_dir}. Skipping {subdir}.")
-            continue
+    if not exp_desc_file.exists():
+        raise FileNotFoundError(f"Experiment description file not found: {exp_desc_file}.")
 
-        if not exp_desc_file.exists():
-            logging.info(f"Experiment description file not found: {exp_desc_file}. Skipping {subdir}.")
-            continue
+    df = pd.read_csv(exp_desc_file, sep=None, engine="python")
 
-        df = pd.read_csv(exp_desc_file, sep=None, engine="python")
+    df, df_key = preprocess_exp_desc_df(df, exp_path)
 
-        for tiff_path in tiff_dir.glob("*.tif*"):
-            if str(tiff_path) in used:
-                continue
+    tiffs = []
+    for tiff_path in tiff_dir.glob("*.tif*"):
+        tiffs.append(preprocess_tiff(tiff_path, df_key))
 
-            metadata = find_metadata(df, tiff_path.name, tiff_path)
-            metadata.update(exp_metadata)  # Add experiment-level metadata to the TIFF metadata
+    for _, row in df.iterrows():
+        row_desc = tuple(row[c] for c in df_key)
+        matching_tiff_paths = [tiff["Path"] for tiff in tiffs if tiff["Desc"] == row_desc]
 
-            if metadata is not None:
-                all_channels = get_all_channels(tiff_path.name, tiff_dir)
+        if len(matching_tiff_paths) == 0:
+            raise ValueError(f"No TIFF found matching description {row_desc}.")
 
-                metadata["Experiment"] = subdir.name
-                metadata["Tiff_path"] = str(tiff_path)
+        channel_mapping, channel_metadata = process_matched_tiffs(matching_tiff_paths, row)
 
-                entry = {"metadata": metadata}
+        metadata = row.dropna().to_dict()
+        metadata.update(exp_metadata)
+        metadata.update(channel_metadata)
 
-                for channel_path in all_channels:
-                    used.add(str(channel_path))
-                    entry[channel_type(channel_path.name)] = str(channel_path)
-
-                data.append(entry)
+        entry = {"metadata": metadata}
+        entry.update(channel_mapping)
+        data.append(entry)
 
     return data
 
@@ -193,9 +221,12 @@ def main():
     data = []
     data_df = pd.read_csv(args.input).dropna(subset=["Path"])
     for _, row in data_df[data_df["Usable"] == "T"].iterrows():
-        source_directory = row["Path"]
-        exp_metadata = row.drop(["Path"]).dropna().to_dict()
-        data.extend(get_data_from_dir(source_directory, exp_metadata))
+        exp_path = Path(row["Path"])
+        exp_metadata = row.replace("", pd.NA).dropna().to_dict()
+        try:
+            data.extend(get_data_from_exp(exp_path, exp_metadata))
+        except Exception as e:
+            logging.error(f"Error processing experiment at {exp_path}: {e}")
 
     logging.info(f"Matching completed. Total matched entries: {len(data)}.")
 
