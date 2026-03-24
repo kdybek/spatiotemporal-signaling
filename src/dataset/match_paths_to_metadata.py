@@ -225,7 +225,7 @@ def main():
     data_df = pd.read_csv(args.input).dropna(subset=["Path"])
     for _, row in data_df[data_df["Usable"] == "T"].iterrows():
         exp_path = Path(row["Path"])
-        exp_metadata = row.replace("", pd.NA).dropna().to_dict()
+        exp_metadata = row.copy().replace("", pd.NA).dropna().to_dict()
         try:
             data.extend(get_data_from_exp(exp_path, exp_metadata))
         except Exception as e:
