@@ -47,7 +47,7 @@ def preprocess_exp_desc_df(df, exp_path):
         df = df[df["Well"] != ""]  # Drop rows where "Well" is empty after processing
         if not df.duplicated(subset=["Well"]).any():
             key = ["Well"]
-        if "Site" in df.columns and not df.duplicated(subset=["Well", "Site"]).any():
+        elif "Site" in df.columns and not df.duplicated(subset=["Well", "Site"]).any():
             key = ["Well", "Site"]
         elif "Position" in df.columns and not df.duplicated(subset=["Well", "Position"]).any():
             key = ["Well", "Position"]
@@ -69,7 +69,7 @@ def preprocess_tiff_pos(tiff_path):
         raise ValueError(f"Unexpected TIFF filename format: {tiff_path}.")
 
     return {
-        "Path": str(tiff_path),
+        "Path": tiff_path,
         "Desc": (position,),
     }
 
