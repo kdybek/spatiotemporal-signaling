@@ -236,6 +236,7 @@ def main():
             all_data.extend(get_data_from_exp(exp_path, exp_metadata))
         except Exception as e:
             logging.warning(f"Error processing experiment at {exp_path}: {e}, type: {type(e)}")
+            logging.exception(e)
 
     logging.info(f"Matching completed. Total matched entries: {len(all_data)}.")
 
