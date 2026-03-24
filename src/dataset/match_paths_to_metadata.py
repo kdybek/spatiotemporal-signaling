@@ -25,7 +25,7 @@ def remove_leading_zeros_well(s):
     if isinstance(s, str) and len(s) > 1 and s[0].isalpha() and s[1:].isdigit():
         return s[0] + str(int(s[1:])) if len(s) > 1 else s
     else:
-        return None
+        return ""
 
 
 def preprocess_exp_desc_df(df, exp_path):
@@ -43,7 +43,8 @@ def preprocess_exp_desc_df(df, exp_path):
         else:
             raise ValueError("No key found for experiment description.")
     elif "Well" in df.columns:
-        df = df[df["Well"].apply(remove_leading_zeros_well) is not None]  # Filter out rows with invalid well names
+        df["Well"] = df["Well"].apply(remove_leading_zeros_well)
+        df = df[df["Well"] != ""]  # Drop rows where "Well" is empty after processing
         if not df.duplicated(subset=["Well"]).any():
             key = ["Well"]
         if "Site" in df.columns and not df.duplicated(subset=["Well", "Site"]).any():
@@ -165,10 +166,10 @@ def get_data_from_exp(exp_path, exp_metadata):
     tiff_dir = exp_path / "TIFFs"
 
     if not tiff_dir.exists():
-        raise FileNotFoundError(f"TIFF directory not found: {tiff_dir}.")
+        raise FileNotFoundError("TIFF directory not found.")
 
     if not exp_desc_file.exists():
-        raise FileNotFoundError(f"Experiment description file not found: {exp_desc_file}.")
+        raise FileNotFoundError("Experiment description file not found.")
 
     exp_desc_df = pd.read_csv(exp_desc_file, sep=None, engine="python")
 
