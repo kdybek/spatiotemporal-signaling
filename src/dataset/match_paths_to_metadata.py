@@ -125,7 +125,7 @@ def process_split_channel_matched_tiffs(tiff_paths, exp_metadata):
         channel_tiff_paths = [tiff_path for tiff_path in tiff_paths if channel_pattern in str(tiff_path.name)]
 
         if len(channel_tiff_paths) == 0:
-            raise ValueError(f"No TIFF found matching pattern '{channel_pattern}' for channel {channel}. Checked paths: {tiff_paths}.")
+            raise ValueError(f"No TIFF found matching pattern '{channel_pattern}' for channel {channel}.")
         elif len(channel_tiff_paths) > 1:
             raise ValueError(f"Multiple TIFFs found matching pattern '{channel_pattern}' for channel {channel}: {channel_tiff_paths}.")
 
@@ -187,8 +187,11 @@ def get_data_from_exp(exp_path, exp_metadata):
         row_desc = tuple(row[c] for c in exp_desc_df_key)
         matching_tiff_paths = [tiff["Path"] for tiff in tiffs if tiff["Desc"] == row_desc]
 
-        if len(matching_tiff_paths) == 0 and not row.get("Site_added", False):  # If I added "Site" to the description it can not match to anything
-            raise ValueError(f"No TIFF found matching description {row_desc}.")
+        if len(matching_tiff_paths) == 0:
+            if row.get("Site_added", False):  # If I added "Site" to the description it can not match to anything
+                continue
+            else:
+                raise ValueError(f"No TIFF found matching description {row_desc}.")
 
         channel_mapping, channel_metadata = process_matched_tiffs(matching_tiff_paths, exp_metadata)
 
