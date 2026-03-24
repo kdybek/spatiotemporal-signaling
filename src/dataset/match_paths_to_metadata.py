@@ -122,16 +122,16 @@ def process_split_channel_matched_tiffs(tiff_paths, exp_metadata):
     counter = 1
     for channel in channels:
         channel_pattern = exp_metadata[channel]
-        channel_tiffs = [tiff for tiff in tiff_paths if channel_pattern in str(tiff.name)]
+        channel_tiff_paths = [tiff_path for tiff_path in tiff_paths if channel_pattern in str(tiff_path.name)]
 
-        if len(channel_tiffs) == 0:
-            raise ValueError(f"No TIFF found matching pattern '{channel_pattern}' for channel {channel}.")
-        elif len(channel_tiffs) > 1:
-            raise ValueError(f"Multiple TIFFs found matching pattern '{channel_pattern}' for channel {channel}: {channel_tiffs}.")
+        if len(channel_tiff_paths) == 0:
+            raise ValueError(f"No TIFF found matching pattern '{channel_pattern}' for channel {channel}. Checked paths: {tiff_paths}.")
+        elif len(channel_tiff_paths) > 1:
+            raise ValueError(f"Multiple TIFFs found matching pattern '{channel_pattern}' for channel {channel}: {channel_tiff_paths}.")
 
         channel_metadata[f"C{counter}"] = channel
-        channel_metadata[f"C{counter}_tiff"] = str(channel_tiffs[0])
-        channel_mapping[f"C{counter}"] = str(channel_tiffs[0])
+        channel_metadata[f"C{counter}_tiff"] = str(channel_tiff_paths[0])
+        channel_mapping[f"C{counter}"] = str(channel_tiff_paths[0])
         counter += 1
 
     return channel_mapping, channel_metadata
