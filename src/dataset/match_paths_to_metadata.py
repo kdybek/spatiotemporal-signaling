@@ -122,8 +122,8 @@ def process_split_channel_matched_tiffs(tiff_paths, exp_metadata):
     counter = 1
     for channel in channels:
         channel_pattern = exp_metadata[channel]
-        channel_pattern = "_" + channel_pattern
-        channel_tiff_paths = [tiff_path for tiff_path in tiff_paths if channel_pattern in str(tiff_path.name)]
+        channel_pattern_regex = rf"(?<!Well){re.escape(channel_pattern)}"  # Possible edge case: channel C1 mathing with WellC1
+        channel_tiff_paths = [tiff_path for tiff_path in tiff_paths if re.search(channel_pattern_regex, str(tiff_path)) is not None]
 
         if len(channel_tiff_paths) == 0:
             raise ValueError(f"No TIFF found matching pattern '{channel_pattern}' for channel {channel}.")
