@@ -46,7 +46,11 @@ def preprocess_exp_desc_df(df, exp_path):
         df["Well"] = df["Well"].apply(remove_leading_zeros_well)
         df = df[df["Well"] != ""]  # Drop rows where "Well" is empty after processing
         if not df.duplicated(subset=["Well"]).any():
-            key = ["Well"]
+            original_len = len(df)
+            df = df.loc[df.index.repeat(10)]
+            df["Site"] = list(range(10)) * original_len
+            df["Site_added"] = True
+            key = ["Well", "Site"]
         elif "Site" in df.columns and not df.duplicated(subset=["Well", "Site"]).any():
             key = ["Well", "Site"]
         elif "Position" in df.columns and not df.duplicated(subset=["Well", "Position"]).any():
@@ -183,7 +187,7 @@ def get_data_from_exp(exp_path, exp_metadata):
         row_desc = tuple(row[c] for c in exp_desc_df_key)
         matching_tiff_paths = [tiff["Path"] for tiff in tiffs if tiff["Desc"] == row_desc]
 
-        if len(matching_tiff_paths) == 0:
+        if len(matching_tiff_paths) == 0 and not row.get("Site_added", False):  # If I added "Site" to the description it can not match to anything
             raise ValueError(f"No TIFF found matching description {row_desc}.")
 
         channel_mapping, channel_metadata = process_matched_tiffs(matching_tiff_paths, exp_metadata)
