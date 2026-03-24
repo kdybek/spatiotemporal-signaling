@@ -168,16 +168,16 @@ def get_data_from_exp(exp_path, exp_metadata):
     if not exp_desc_file.exists():
         raise FileNotFoundError(f"Experiment description file not found: {exp_desc_file}.")
 
-    df = pd.read_csv(exp_desc_file, sep=None, engine="python")
+    exp_desc_df = pd.read_csv(exp_desc_file, sep=None, engine="python")
 
-    df, df_key = preprocess_exp_desc_df(df, exp_path)
+    exp_desc_df, exp_desc_df_key = preprocess_exp_desc_df(exp_desc_df, exp_path)
 
     tiffs = []
     for tiff_path in tiff_dir.glob("*.tif*"):
-        tiffs.append(preprocess_tiff(tiff_path, df_key))
+        tiffs.append(preprocess_tiff(tiff_path, exp_desc_df_key))
 
-    for _, row in df.iterrows():
-        row_desc = tuple(row[c] for c in df_key)
+    for _, row in exp_desc_df.iterrows():
+        row_desc = tuple(row[c] for c in exp_desc_df_key)
         matching_tiff_paths = [tiff["Path"] for tiff in tiffs if tiff["Desc"] == row_desc]
 
         if len(matching_tiff_paths) == 0:
@@ -213,28 +213,34 @@ def main():
         help="Output PKL file to save list of {'tiff_path','metadata'} dicts"
     )
 
+    parser.add_argument(
+        "--log",
+        default="matching.log",
+        help="Log file to save warnings and info about the matching process"
+    )
+
     args = parser.parse_args()
 
     logging.basicConfig(
-        filename="matching.log",
+        filename=args.log,
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s"
     )
 
-    data = []
-    data_df = pd.read_csv(args.input).dropna(subset=["Path"])
-    for _, row in data_df[data_df["Usable"] == "T"].iterrows():
+    all_data = []
+    exps_df = pd.read_csv(args.input).dropna(subset=["Path"])
+    for _, row in exps_df[exps_df["Usable"] == "T"].iterrows():
         exp_path = Path(row["Path"])
         exp_metadata = row.copy().replace("", pd.NA).dropna().to_dict()
         try:
-            data.extend(get_data_from_exp(exp_path, exp_metadata))
+            all_data.extend(get_data_from_exp(exp_path, exp_metadata))
         except Exception as e:
-            logging.error(f"Error processing experiment at {exp_path}: {e}")
+            logging.warning(f"Error processing experiment at {exp_path}: {e}, type: {type(e)}")
 
-    logging.info(f"Matching completed. Total matched entries: {len(data)}.")
+    logging.info(f"Matching completed. Total matched entries: {len(all_data)}.")
 
     with open(args.output, "wb") as f:
-        pickle.dump(data, f)
+        pickle.dump(all_data, f)
 
 
 if __name__ == "__main__":
