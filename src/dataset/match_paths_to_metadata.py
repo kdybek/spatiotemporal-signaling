@@ -122,6 +122,7 @@ def process_split_channel_matched_tiffs(tiff_paths, exp_metadata):
     counter = 1
     for channel in channels:
         channel_pattern = exp_metadata[channel]
+        channel_pattern = "_" + channel_pattern
         channel_tiff_paths = [tiff_path for tiff_path in tiff_paths if channel_pattern in str(tiff_path.name)]
 
         if len(channel_tiff_paths) == 0:
@@ -191,9 +192,14 @@ def get_data_from_exp(exp_path, exp_metadata):
             if row.get("Site_added", False):  # If I added "Site" to the description it can not match to anything
                 continue
             else:
-                raise ValueError(f"No TIFF found matching description {row_desc}.")
+                logging.warning(f"No TIFF found matching description {row_desc} for experiment at {exp_path}.")
+                continue
 
-        channel_mapping, channel_metadata = process_matched_tiffs(matching_tiff_paths, exp_metadata)
+        try:
+            channel_mapping, channel_metadata = process_matched_tiffs(matching_tiff_paths, exp_metadata)
+        except Exception as e:
+            logging.warning(f"Error processing matched TIFFs for description {row_desc} in experiment at {exp_path}: {e}")
+            continue
 
         metadata = row.dropna().to_dict()
         metadata.update(exp_metadata)
