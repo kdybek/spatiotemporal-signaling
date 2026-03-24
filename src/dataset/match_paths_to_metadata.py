@@ -42,7 +42,7 @@ def preprocess_exp_desc_df(df, exp_path):
             key = ["Position"]
         else:
             raise ValueError("No key found for experiment description.")
-    else:
+    elif "Well" in df.columns:
         df = df[df["Well"].apply(remove_leading_zeros_well) is not None]  # Filter out rows with invalid well names
         if not df.duplicated(subset=["Well"]).any():
             key = ["Well"]
@@ -52,6 +52,8 @@ def preprocess_exp_desc_df(df, exp_path):
             key = ["Well", "Position"]
         else:
             raise ValueError("No key found for experiment description.")
+    else:
+        raise ValueError("No key found for experiment description.")
 
     return df, key
 
@@ -183,7 +185,7 @@ def get_data_from_exp(exp_path, exp_metadata):
         if len(matching_tiff_paths) == 0:
             raise ValueError(f"No TIFF found matching description {row_desc}.")
 
-        channel_mapping, channel_metadata = process_matched_tiffs(matching_tiff_paths, row)
+        channel_mapping, channel_metadata = process_matched_tiffs(matching_tiff_paths, exp_metadata)
 
         metadata = row.dropna().to_dict()
         metadata.update(exp_metadata)
