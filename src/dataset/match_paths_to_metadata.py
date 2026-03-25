@@ -64,7 +64,8 @@ def preprocess_exp_desc_df(df, exp_path):
 
 
 def preprocess_tiff_pos(tiff_path):
-    pattern = re.compile(r"^(?:C\d_?)?(?:[Ss]eries_?)?(\d+)(?:_[Oo]ri)?\.tiff?$")  # Matches "01.tif", "01_Ori.tif", etc.
+    # Matches "01.tif", "01_Ori.tif", etc.
+    pattern = re.compile(r"^(?:C\d_?)?(?:[Ss]eries_?)?(\d+)(?:_[Oo]ri)?\.tiff?$")
     tiff_filename = tiff_path.name
 
     if match := pattern.match(tiff_filename):
@@ -79,8 +80,10 @@ def preprocess_tiff_pos(tiff_path):
 
 
 def preprocess_tiff_well(tiff_path, just_well):
-    pattern1 = re.compile(r"^Well([A-Z]\d+).*Site(\d+).*\.tiff?$")  # For example, "WellA2_Site1.tiff"
-    pattern2 = re.compile(r"^Well([A-Z]\d+)_Seq\d+_[A-Z]\d+_(\d+).*\.tiff?$")  # For example, "WellA2_Seq0000_A2_0001_WF-640.tiff"
+    # For example, "WellA2_Site1.tiff"
+    pattern1 = re.compile(r"^Well([A-Z]\d+).*Site(\d+).*\.tiff?$")
+    # For example, "WellA2_Seq0000_A2_0001_WF-640.tiff"
+    pattern2 = re.compile(r"^Well([A-Z]\d+)_Seq\d+_[A-Z]\d+_(\d+).*\.tiff?$")
     tiff_filename = tiff_path.name
 
     if match := pattern1.match(tiff_filename):
@@ -122,13 +125,17 @@ def process_split_channel_matched_tiffs(tiff_paths, exp_metadata):
     counter = 1
     for channel in channels:
         channel_pattern = exp_metadata[channel]
-        channel_pattern_regex = rf"(?<!Well){re.escape(channel_pattern)}"  # Possible edge case: channel C1 mathing with WellC1
-        channel_tiff_paths = [tiff_path for tiff_path in tiff_paths if re.search(channel_pattern_regex, str(tiff_path)) is not None]
+        # Possible edge case: channel C1 mathing with WellC1
+        channel_pattern_regex = rf"(?<!Well){re.escape(channel_pattern)}"
+        channel_tiff_paths = [tiff_path for tiff_path in tiff_paths if re.search(
+            channel_pattern_regex, str(tiff_path)) is not None]
 
         if len(channel_tiff_paths) == 0:
-            raise ValueError(f"No TIFF found matching pattern '{channel_pattern}' for channel {channel}.")
+            raise ValueError(f"No TIFF found matching pattern '{
+                             channel_pattern}' for channel {channel}.")
         elif len(channel_tiff_paths) > 1:
-            raise ValueError(f"Multiple TIFFs found matching pattern '{channel_pattern}' for channel {channel}: {channel_tiff_paths}.")
+            raise ValueError(f"Multiple TIFFs found matching pattern '{
+                             channel_pattern}' for channel {channel}: {channel_tiff_paths}.")
 
         channel_metadata[f"C{counter}"] = channel
         channel_metadata[f"C{counter}_tiff"] = str(channel_tiff_paths[0])
@@ -140,7 +147,8 @@ def process_split_channel_matched_tiffs(tiff_paths, exp_metadata):
 
 def process_non_split_channel_matched_tiffs(tiff_paths, exp_metadata):
     if len(tiff_paths) != 1:
-        raise ValueError(f"Expected exactly one TIFF path for non-split-channel experiment, but got {tiff_paths}.")
+        raise ValueError(
+            f"Expected exactly one TIFF path for non-split-channel experiment, but got {tiff_paths}.")
 
     channel_mapping = {"All_channels": str(tiff_paths[0])}
 
@@ -186,26 +194,30 @@ def get_data_from_exp(exp_path, exp_metadata):
 
     for _, row in exp_desc_df.iterrows():
         row_desc = tuple(row[c] for c in exp_desc_df_key)
-        matching_tiff_paths = [tiff["Path"] for tiff in tiffs if tiff["Desc"] == row_desc]
+        matching_tiff_paths = [tiff["Path"]
+                               for tiff in tiffs if tiff["Desc"] == row_desc]
 
         if len(matching_tiff_paths) == 0:
             if row.get("Site_added", False):  # If I added "Site" to the description it can not match to anything
                 continue
             else:
-                logging.warning(f"No TIFF found matching description {row_desc} for experiment at {exp_path}.")
+                logging.warning(f"No TIFF found matching description {
+                                row_desc} for experiment at {exp_path}.")
                 continue
 
         try:
-            channel_mapping, channel_metadata = process_matched_tiffs(matching_tiff_paths, exp_metadata)
+            channel_mapping, channel_metadata = process_matched_tiffs(
+                matching_tiff_paths, exp_metadata)
         except Exception as e:
-            logging.warning(f"Error processing matched TIFFs for description {row_desc} in experiment at {exp_path}: {e}")
+            logging.warning(f"Error processing matched TIFFs for description {
+                            row_desc} in experiment at {exp_path}: {e}")
             continue
 
         metadata = row.dropna().to_dict()
         metadata.update(exp_metadata)
         metadata.update(channel_metadata)
 
-        entry = {"metadata": metadata}
+        entry = {"Metadata": metadata}
         entry.update(channel_mapping)
         data.append(entry)
 
