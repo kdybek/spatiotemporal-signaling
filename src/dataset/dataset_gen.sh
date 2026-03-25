@@ -4,7 +4,8 @@
 #SBATCH --error=logs/%x_%j.err
 
 #SBATCH --time=24:00:00
-#SBATCH --partition=cpu
+#SBATCH --account=gratis
+#SBATCH --partition=epyc2
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=32G
