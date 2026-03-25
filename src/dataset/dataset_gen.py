@@ -1,6 +1,7 @@
 import argparse
 import pickle
 import os
+import logging
 
 import zarr
 import tifffile as tiff
@@ -83,7 +84,11 @@ def create_zarr_dataset(items, out_path):
 
     for i, item in enumerate(tqdm(items)):
         meta = item["Metadata"]
-        video = extract_video(item)
+        try:
+            video = extract_video(item)
+        except Exception as e:
+            logging.warning(f"Skipping item {i} due to error: {e}")
+            continue
 
         compressors = zarr.codecs.BloscCodec(
             cname='zstd', clevel=3, shuffle=zarr.codecs.BloscShuffle.bitshuffle)
@@ -124,11 +129,27 @@ def main():
         help="Output Zarr directory"
     )
 
+    parser.add_argument(
+        "--log",
+        default="gen.log",
+        help="Log file to save warnings and info about the matching process"
+    )
+
     args = parser.parse_args()
 
-    items = load_pkl(args.input)
+    logging.basicConfig(
+        filename=args.log,
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s"
+    )
 
-    print(f"Loaded {len(items)} entries from PKL")
+    try:
+        items = load_pkl(args.input)
+    except Exception as e:
+        logging.error(f"Failed to load PKL file: {e}")
+        return
+
+    logging.info(f"Loaded {len(items)} items from PKL.")
 
     create_zarr_dataset(items, args.output)
 
