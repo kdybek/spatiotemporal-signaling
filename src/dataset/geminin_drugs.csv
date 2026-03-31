@@ -1,0 +1,16 @@
+Path,Resolution_px,Resolution_um,Magnification,N_FOV,N_frames_per_FOV,Acq_freq_min,Single_file_per_FOV,Split_channels,Ch_H2B,Ch_ERK-KTR,Ch_AKT-KTR,Ch_Geminin,Ch_EKAR_YFP,Ch_EKAR_CFP,Usable,Comments
+/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_Geminin-Drugs/2019-02-22_Exp1_Ctx-Gef-Sor,1024x1024,332.80x332.80,40,72,528,5,T,T,C1,C3,,C2,,,T,"Part of 3 biol. reps. on 3 cell lines (WT, KRAS-G12V, PIK3CA-H1047R) with 9 drugs"
+/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_Geminin-Drugs/2019-02-24_Exp2_Tra-Shc-Pic,1024x1024,332.80x332.80,40,72,528,5,T,T,C1,C3,,C2,,,T,
+/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_Geminin-Drugs/2019-02-26_Exp3_Azd53-Bez-Azd85,1024x1024,332.80x332.80,40,72,528,5,T,T,C1,C3,,C2,,,T,
+/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_Geminin-Drugs/2019-03-08_Exp1_Ctx-Gef-Sor,1024x1024,332.80x332.80,40,72,528,5,T,T,C1,C3,,C2,,,T,
+/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_Geminin-Drugs/2019-03-10_Exp2_Tra-Shc-Pic,1024x1024,332.80x332.80,40,72,528,5,T,T,C1,C3,,C2,,,T,
+/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_Geminin-Drugs/2019-03-23_Exp3_Azd53-Bez-Azd85,1024x1024,332.80x332.80,40,72,528,5,T,T,C1,C3,,C2,,,T,
+/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_Geminin-Drugs/2019-04-12_Exp1_Ctx-Gef-Sor,1024x1024,332.80x332.80,40,72,528,5,T,T,C1,C3,,C2,,,T,
+/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_Geminin-Drugs/2019-04-26_Exp2_Tra-Shc-Pic,1024x1024,332.80x332.80,40,72,528,5,T,T,C1,C3,,C2,,,T,
+/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_Geminin-Drugs/2019-05-03_Exp3_Azd53-Bez-Azd85,1024x1024,332.80x332.80,40,72,528,5,T,T,C1,C3,,C2,,,T,
+/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_Geminin-Drugs/2019-05-18_Exp1_Ctx-Gef-Sor_NoGem_FoXO,1024x1024,332.80x332.80,40,48,528,5,T,T,C1,C3,C2,,,,T,"A follow-up on the same 3 cell ines with 9 drugs, but AKT biosensor (FoxO-KTR) instead of Geminin"
+/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_Geminin-Drugs/2019-05-26_Exp2_Tra-Shc-Pic_NoGemFoXO,1024x1024,332.80x332.80,40,48,250,5,T,T,C1,C3,C2,,,,T,The experiment got interrupted and comprises two parts: 250 + 206 frames acquired at different FOVs!
+/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_Geminin-Drugs/2019-05-31_Exp3_Azd53-Bez-Azd85_NoGemFoXO,1024x1024,332.80x332.80,40,48,528,5,T,T,C1,C3,C2,,,,T,
+/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_Geminin-Drugs/2019-06-07_Exp2_Tra-Shc-Pic_NoGemFoXO,1024x1024,332.80x332.80,40,48,528,5,T,T,C1,C3,C2,,,,T,
+/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_Geminin-Drugs/2020-07-06_E545KandH1047R_Geminin_ERK_drugs,1024x1024,664.66x664.66,20,60,1081,5,T,F,1,3,,2,,,T,"Two exp. reps. with PIK3CA-E545K and PIK3CA-H1047R, geminin biosensor with 4 drugs + EGF"
+/mnt/imaging.data/pgagliardi/MCF10A_TimeLapse_Geminin-Drugs/2020-07-10_E545KandH1047R_Geminin_ERK_drugs,1024x1024,664.66x664.66,20,60,1081,5,T,F,1,3,,2,,,T,
