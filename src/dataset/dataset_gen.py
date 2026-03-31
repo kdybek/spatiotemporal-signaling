@@ -2,12 +2,10 @@ import argparse
 import pickle
 import os
 import logging
-import json
 import zarr
 import tifffile as tiff
 import numpy as np
 from tqdm import tqdm
-from numcodecs import Pickle as PickleCodec
 
 
 def load_tiff(path):
@@ -145,15 +143,12 @@ def clip_video(video, meta, clip_frames, clip_size, clips_per_video):
     return clips
 
 
-def append_to_zarr(root, clips, meta, data_arr_name, meta_arr_name):
-    current_len = root[data_arr_name].shape[0]
+def append_to_zarr(root, clips, arr_name):
+    current_len = root[arr_name].shape[0]
     new_len = current_len + clips.shape[0]
 
-    root[data_arr_name].resize(new_len, axis=0)
-    root[data_arr_name][current_len:new_len] = clips
-
-    root[meta_arr_name].resize(new_len, axis=0)
-    root[meta_arr_name][current_len:new_len] = [meta] * clips.shape[0]
+    root[arr_name].resize(new_len, axis=0)
+    root[arr_name][current_len:new_len] = clips
 
 
 def create_zarr_dataset(
@@ -178,14 +173,7 @@ def create_zarr_dataset(
         compressors=compressors,
     )
 
-    root.create_array(
-        name="Metadata",
-        shape=(0,),  # 1D array of dicts
-        dtype=object,
-        chunks=(1000,),
-        filters=PickleCodec(),  # Use PickleCodec to store dicts as bytes
-    )
-
+    all_meta = []
     for i, item in enumerate(tqdm(items)):
         meta = item["Metadata"]
         meta.update({
@@ -201,7 +189,10 @@ def create_zarr_dataset(
             logging.warning(f"Skipping item {i} due to error: {e}")
             continue
 
-        append_to_zarr(root, clips, meta, "Data", "Metadata")
+        append_to_zarr(root, clips, "Data")
+        all_meta.extend([meta] * clips.shape[0])  # Repeat meta for each clip
+
+    root.attrs["Metadata"] = all_meta
 
 
 def main():
