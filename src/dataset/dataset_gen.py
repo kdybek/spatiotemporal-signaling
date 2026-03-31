@@ -78,38 +78,104 @@ def extract_video(item):
     return video
 
 
-def create_zarr_dataset(items, out_path):
+def choose_channels(video, item, c1, c2):
+    channel1 = next((k for k, v in item if v == c1), None)
+    channel2 = next((k for k, v in item if v == c2), None)
+
+    if channel1 is None or channel2 is None:
+        raise ValueError(f"Channels {c1} and/or {c2} not found in item metadata")
+
+    idx1 = int(channel1[1:]) - 1
+    idx2 = int(channel2[1:]) - 1
+
+    if idx1 >= video.shape[1] or idx2 >= video.shape[1]:
+        raise ValueError(f"Channel indices {
+                         idx1} and/or {idx2} out of bounds for video with shape {video.shape}")
+
+    return video[:, [idx1, idx2], :, :]
+
+
+def clip_video(video, clip_frames, clip_size, clips_per_video):
+    T, C, H, W = video.shape
+    clips = []
+
+    if T < clip_frames or H < clip_size or W < clip_size:
+        raise ValueError(f"Video shape {video.shape} is smaller than clip requirements: "
+                         f"clip_frames={clip_frames}, clip_size={clip_size}")
+
+    for _ in range(clips_per_video):
+        start_t = np.random.randint(0, T - clip_frames + 1)
+        start_h = np.random.randint(0, H - clip_size + 1)
+        start_w = np.random.randint(0, W - clip_size + 1)
+
+        clip = video[start_t:start_t + clip_frames, :,
+                     start_h:start_h + clip_size, start_w:start_w + clip_size]
+        clips.append(clip)
+
+    # (clips_per_video, clip_frames, C, clip_size, clip_size)
+    clips = np.stack(clips, axis=0)
+
+    return clips
+
+
+def append_to_zarr(root, clips, meta, data_arr_name, meta_arr_name):
+    current_len = root[data_arr_name].shape[0]
+    new_len = current_len + clips.shape[0]
+    root[data_arr_name].resize(new_len, axis=0)
+    root[data_arr_name][current_len:new_len] = clips
+    root[meta_arr_name].resize(new_len, axis=0)
+    root[meta_arr_name][current_len:new_len] = [meta] * clips.shape[0]
+
+
+def create_zarr_dataset(
+        items,
+        out_path,
+        clip_frames,
+        clip_size,
+        clips_per_video,
+        c1,
+        c2
+):
     root = zarr.open(out_path, mode='w')
-    root.attrs['num_videos'] = len(items)
+
+    compressors = zarr.codecs.BloscCodec(
+        cname='zstd', clevel=3, shuffle=zarr.codecs.BloscShuffle.bitshuffle)
+
+    root.create_array(
+        name="Data",
+        # (T, C, H, W) with C=2 for selected channels
+        shape=(0, 2, clip_size, clip_size),
+        chunks=(clip_frames, 2, clip_size, clip_size),
+        dtype="float32",
+        compressors=compressors,
+        maxshape=(None, 2, clip_size, clip_size)
+    )
+
+    root.create_array(
+        name="Metadata",
+        shape=(0,),  # 1D array of dicts
+        dtype=object,
+        chunks=(1000,),
+        object_codec=zarr.codecs.Pickle(),
+        maxshape=(None,)
+    )
 
     for i, item in enumerate(tqdm(items)):
         meta = item["Metadata"]
+        meta.update({
+            "C1": c1,
+            "C2": c2,
+        })
+
         try:
             video = extract_video(item)
+            video = choose_channels(video, item, c1, c2)
+            clips = clip_video(video, clip_frames, clip_size, clips_per_video)
         except Exception as e:
             logging.warning(f"Skipping item {i} due to error: {e}")
             continue
 
-        compressors = zarr.codecs.BloscCodec(
-            cname='zstd', clevel=3, shuffle=zarr.codecs.BloscShuffle.bitshuffle)
-
-        T, C, H, W = video.shape
-
-        group = root.create_group(f"video_{i:05d}")
-
-        group.create_array(
-            name="data",
-            data=video,
-            compressors=compressors,
-            chunks=(16, C, H, W)
-        )
-
-        # attach metadata
-        group.attrs.update(meta)
-        group.attrs['shape'] = (T, C, H, W)
-
-    # important for fast loading later
-    zarr.consolidate_metadata(root.store)
+        append_to_zarr(root, clips, meta, "Data", "Metadata")
 
 
 def main():
@@ -135,6 +201,48 @@ def main():
         help="Log file to save warnings and info about the matching process"
     )
 
+    parser.add_argument(
+        "--clip_frames",
+        type=int,
+        default=16,
+        help="Number of frames per clip for Acq_freq_min=5 (default: 16)"
+    )
+
+    parser.add_argument(
+        "--clip_size",
+        type=int,
+        default=224,
+        help="Height and width of output clips for Magnification=20 (default: 224)"
+    )
+
+    parser.add_argument(
+        "--clips_per_video",
+        type=int,
+        default=16,
+        help="Number of clips to extract per video (default: 4)"
+    )
+
+    parser.add_argument(
+        "--c1",
+        type=str,
+        default="Ch_H2B",
+        help="Biosensor in channel 1 (default: Ch_H2B)"
+    )
+
+    parser.add_argument(
+        "--c2",
+        type=str,
+        default="Ch_ERK-KTR",
+        help="Biosensor in channel 2 (default: Ch_ERK-KTR)"
+    )
+
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed for reproducibility (default: 42)"
+    )
+
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -142,6 +250,8 @@ def main():
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(message)s"
     )
+
+    np.random.seed(args.seed)
 
     try:
         items = load_pkl(args.input)
@@ -151,7 +261,10 @@ def main():
 
     logging.info(f"Loaded {len(items)} items from PKL.")
 
-    create_zarr_dataset(items, args.output)
+    create_zarr_dataset(items, args.output, args.clip_frames,
+                        args.clip_size, args.clips_per_video, args.c1, args.c2)
+
+    logging.info(f"Zarr dataset created at {args.output}")
 
 
 if __name__ == "__main__":
