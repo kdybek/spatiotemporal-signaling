@@ -143,14 +143,6 @@ def clip_video(video, meta, clip_frames, clip_size, clips_per_video):
     return clips
 
 
-def append_to_zarr(root, clips, arr_name):
-    current_len = root[arr_name].shape[0]
-    new_len = current_len + clips.shape[0]
-
-    root[arr_name].resize(new_len, axis=0)
-    root[arr_name][current_len:new_len] = clips
-
-
 def create_zarr_dataset(
         items,
         out_path,
@@ -189,7 +181,7 @@ def create_zarr_dataset(
             logging.warning(f"Skipping item {i} due to error: {e}")
             continue
 
-        append_to_zarr(root, clips, "Data")
+        root["Data"].append(clips, axis=0)
         all_meta.extend([meta] * clips.shape[0])  # Repeat meta for each clip
 
     root.attrs["Metadata"] = all_meta
