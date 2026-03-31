@@ -78,8 +78,8 @@ def extract_video(item):
 
 
 def choose_channels(video, item, c1, c2):
-    channel1 = next((k for k, v in item if v == c1), None)
-    channel2 = next((k for k, v in item if v == c2), None)
+    channel1 = next((k for k, v in item.items() if v == c1), None)
+    channel2 = next((k for k, v in item.items() if v == c2), None)
 
     if channel1 is None or channel2 is None:
         raise ValueError(f"Channels {c1} and/or {c2} not found in item metadata")
@@ -184,9 +184,10 @@ def create_zarr_dataset(
         try:
             video = extract_video(item)
             video = choose_channels(video, item, c1, c2)
-            clips = clip_video(video, clip_frames, clip_size, clips_per_video)
+            clips = clip_video(video, meta, clip_frames, clip_size, clips_per_video)
         except Exception as e:
             logging.warning(f"Skipping item {i} due to error: {e}")
+            raise e
             continue
 
         append_to_zarr(root, clips, "Data")
