@@ -173,7 +173,6 @@ def create_zarr_dataset(
         chunks=(1, clip_frames, 2, clip_size, clip_size),
         dtype="float32",
         compressors=compressors,
-        maxshape=(None, clip_frames, 2, clip_size, clip_size)
     )
 
     root.create_array(
@@ -182,7 +181,6 @@ def create_zarr_dataset(
         dtype=object,
         chunks=(1000,),
         object_codec=zarr.codecs.Pickle(),
-        maxshape=(None,)
     )
 
     for i, item in enumerate(tqdm(items)):
