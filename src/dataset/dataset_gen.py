@@ -95,7 +95,29 @@ def choose_channels(video, item, c1, c2):
     return video[:, [idx1, idx2], :, :]
 
 
-def clip_video(video, clip_frames, clip_size, clips_per_video):
+def downsample_video_2x(video):
+    # Average 2x2 blocks to downsample by a factor of 2 in height and width
+    return (
+        video[:, :, 0::2, 0::2] +
+        video[:, :, 0::2, 1::2] +
+        video[:, :, 1::2, 0::2] +
+        video[:, :, 1::2, 1::2]
+    ) / 4.0
+
+
+def clip_video(video, meta, clip_frames, clip_size, clips_per_video):
+    if meta["Acq_freq_min"] != 5:
+        raise ValueError(f"Expected Acq_freq_min=5, but got {
+                         meta['Acq_freq_min']}")  # Don't handle for now
+
+    if meta["Magnification"] == 40:
+        downsample_2x = True
+        clip_size *= 2  # We need to double the clip size to get the same field of view
+    elif meta["Magnification"] == 20:
+        downsample_2x = False
+    else:
+        raise ValueError(f"Unsupported Magnification {meta['Magnification']}")
+
     T, C, H, W = video.shape
     clips = []
 
@@ -110,6 +132,10 @@ def clip_video(video, clip_frames, clip_size, clips_per_video):
 
         clip = video[start_t:start_t + clip_frames, :,
                      start_h:start_h + clip_size, start_w:start_w + clip_size]
+
+        if downsample_2x:
+            clip = downsample_video_2x(clip)
+
         clips.append(clip)
 
     # (clips_per_video, clip_frames, C, clip_size, clip_size)
@@ -143,12 +169,11 @@ def create_zarr_dataset(
 
     root.create_array(
         name="Data",
-        # (T, C, H, W) with C=2 for selected channels
-        shape=(0, 2, clip_size, clip_size),
-        chunks=(clip_frames, 2, clip_size, clip_size),
+        shape=(0, clip_frames, 2, clip_size, clip_size),
+        chunks=(1, clip_frames, 2, clip_size, clip_size),
         dtype="float32",
         compressors=compressors,
-        maxshape=(None, 2, clip_size, clip_size)
+        maxshape=(None, clip_frames, 2, clip_size, clip_size)
     )
 
     root.create_array(
