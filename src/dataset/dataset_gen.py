@@ -7,7 +7,6 @@ import zarr
 import tifffile as tiff
 import numpy as np
 from tqdm import tqdm
-from numcodecs import VLenBytes
 
 
 def load_tiff(path):
@@ -183,9 +182,8 @@ def create_zarr_dataset(
     root.create_array(
         name="Metadata",
         shape=(0,),  # 1D array of dicts
-        dtype=object,
+        dtype="variable_length_bytes",
         chunks=(1000,),
-        object_codec=VLenBytes(),
     )
 
     for i, item in enumerate(tqdm(items)):
