@@ -7,6 +7,7 @@ import zarr
 import tifffile as tiff
 import numpy as np
 from tqdm import tqdm
+from numcodecs import Pickle as PickleCodec
 
 
 def load_tiff(path):
@@ -148,13 +149,11 @@ def append_to_zarr(root, clips, meta, data_arr_name, meta_arr_name):
     current_len = root[data_arr_name].shape[0]
     new_len = current_len + clips.shape[0]
 
-    meta_json = json.dumps(meta).encode('utf-8')
-
     root[data_arr_name].resize(new_len, axis=0)
     root[data_arr_name][current_len:new_len] = clips
 
     root[meta_arr_name].resize(new_len, axis=0)
-    root[meta_arr_name][current_len:new_len] = [meta_json] * clips.shape[0]
+    root[meta_arr_name][current_len:new_len] = [meta] * clips.shape[0]
 
 
 def create_zarr_dataset(
@@ -182,8 +181,9 @@ def create_zarr_dataset(
     root.create_array(
         name="Metadata",
         shape=(0,),  # 1D array of dicts
-        dtype="variable_length_bytes",
+        dtype=object,
         chunks=(1000,),
+        filters=PickleCodec(),  # Use PickleCodec to store dicts as bytes
     )
 
     for i, item in enumerate(tqdm(items)):
