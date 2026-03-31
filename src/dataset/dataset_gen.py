@@ -2,11 +2,12 @@ import argparse
 import pickle
 import os
 import logging
-
+import json
 import zarr
 import tifffile as tiff
 import numpy as np
 from tqdm import tqdm
+from numcodecs import VLenBytes
 
 
 def load_tiff(path):
@@ -74,9 +75,6 @@ def extract_video(item):
                 channels.append(channel)
 
         video = np.concatenate(channels, axis=1)
-
-    print(video.dtype, video.shape)
-    raise Exception("Stop after loading video to check dtype and shape")
 
     return video
 
@@ -150,10 +148,14 @@ def clip_video(video, meta, clip_frames, clip_size, clips_per_video):
 def append_to_zarr(root, clips, meta, data_arr_name, meta_arr_name):
     current_len = root[data_arr_name].shape[0]
     new_len = current_len + clips.shape[0]
+
+    meta_json = json.dumps(meta).encode('utf-8')
+
     root[data_arr_name].resize(new_len, axis=0)
     root[data_arr_name][current_len:new_len] = clips
-    # root[meta_arr_name].resize(new_len, axis=0)
-    # root[meta_arr_name][current_len:new_len] = [meta] * clips.shape[0]
+
+    root[meta_arr_name].resize(new_len, axis=0)
+    root[meta_arr_name][current_len:new_len] = [meta_json] * clips.shape[0]
 
 
 def create_zarr_dataset(
@@ -174,17 +176,17 @@ def create_zarr_dataset(
         name="Data",
         shape=(0, clip_frames, 2, clip_size, clip_size),
         chunks=(1, clip_frames, 2, clip_size, clip_size),
-        dtype="float32",
+        dtype="uint16",
         compressors=compressors,
     )
 
-    # root.create_array(
-    #     name="Metadata",
-    #     shape=(0,),  # 1D array of dicts
-    #     dtype=object,
-    #     chunks=(1000,),
-    #     object_codec=zarr.codecs.Pickle(),
-    # )
+    root.create_array(
+        name="Metadata",
+        shape=(0,),  # 1D array of dicts
+        dtype=object,
+        chunks=(1000,),
+        object_codec=VLenBytes(),
+    )
 
     for i, item in enumerate(tqdm(items)):
         meta = item["Metadata"]
