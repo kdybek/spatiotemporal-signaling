@@ -3,16 +3,13 @@
 #SBATCH --output=logs/%x_%j.out
 #SBATCH --error=logs/%x_%j.err
 
-#SBATCH --account=gratis
 #SBATCH --partition=gpu
-#SBATCH --gres=gpu:h100:1
+#SBATCH --gres=gpu:rtx6000:1
 
 #SBATCH --time=4:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
-
-module load CUDA/12.2.0
 
 export SCRATCH=~/myscratch
 export DATA_DIR=/mnt/imaging.data/zppmimuw
