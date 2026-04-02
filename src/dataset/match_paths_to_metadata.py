@@ -154,7 +154,7 @@ def process_non_split_channel_matched_tiffs(tiff_paths, exp_metadata):
     channel_metadata = {}
 
     for channel in channels:
-        channel_num = exp_metadata[channel]
+        channel_num = int(exp_metadata[channel])
         channel_metadata[f"{channel}_tiff_idx"] = channel_num - 1
         channel_mapping[channel] = channel_num - 1
 
