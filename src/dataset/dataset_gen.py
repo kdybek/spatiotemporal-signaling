@@ -31,7 +31,6 @@ def load_pkl(pkl_path):
     if not isinstance(data, list):
         raise ValueError("PKL must contain a list of dicts")
 
-    ALLOWED_KEYS = {"Metadata", "All_channels"} | {f"C{i}" for i in range(1, 10)}
     for i, item in enumerate(data):
         if not isinstance(item, dict):
             raise ValueError(f"Item {i} in PKL is not a dict")
@@ -39,14 +38,10 @@ def load_pkl(pkl_path):
         if "Metadata" not in item:
             raise ValueError(f"Item {i} missing 'Metadata' key")
 
-        if not item.keys() <= ALLOWED_KEYS:
-            raise ValueError(f"Item {i} contains invalid keys: {
-                             item.keys() - ALLOWED_KEYS}")
-
     return data
 
 
-def extract_video(item):
+def extract_video(item, c1, c2):
     if "All_channels" in item:
         path = item["All_channels"]
 
@@ -54,44 +49,37 @@ def extract_video(item):
             raise FileNotFoundError(f"Missing file: {path}")
 
         video = load_tiff(path)
+
+        try:
+            c1_idx = item[c1]
+            c2_idx = item[c2]
+        except KeyError as e:
+            raise ValueError(f"Missing channel key in item metadata: {e}")
+
+        video = video[:, [c1_idx, c2_idx], :, :]
+
     else:
         channels = []
-        # Sort keys to ensure C1, C2, ... order (and ignore non-channel keys).
-        for key in sorted(item, key=lambda k: int(k[1:]) if k.startswith("C") else float('inf')):
-            if key.startswith("C"):
-                path = item[key]
 
-                if not os.path.exists(path):
-                    raise FileNotFoundError(f"Missing file: {path}")
+        try:
+            tiff_paths = [item[c1], item[c2]]
+        except KeyError as e:
+            raise ValueError(f"Missing channel key in item metadata: {e}")
 
-                channel = load_tiff(path)
+        for tiff_path in tiff_paths:
+            if not os.path.exists(tiff_path):
+                raise FileNotFoundError(f"Missing file: {tiff_path}")
 
-                if channel.shape[1] != 1:
-                    raise ValueError(f"Expected single channel in {
-                                     path}, but got shape {channel.shape}")
+            channel = load_tiff(tiff_path)
 
-                channels.append(channel)
+            if channel.shape[1] != 1:
+                raise ValueError(f"Expected single channel in {tiff_path}, but got shape {channel.shape}")
+
+            channels.append(channel)
 
         video = np.concatenate(channels, axis=1)
 
     return video
-
-
-def choose_channels(video, meta, c1, c2):
-    channel1 = next((k for k, v in meta.items() if v == c1), None)
-    channel2 = next((k for k, v in meta.items() if v == c2), None)
-
-    if channel1 is None or channel2 is None:
-        raise ValueError(f"Channels {c1} and/or {c2} not found in item metadata")
-
-    idx1 = int(channel1[1:]) - 1
-    idx2 = int(channel2[1:]) - 1
-
-    if idx1 >= video.shape[1] or idx2 >= video.shape[1]:
-        raise ValueError(f"Channel indices {
-                         idx1} and/or {idx2} out of bounds for video with shape {video.shape}")
-
-    return video[:, [idx1, idx2], :, :]
 
 
 def downsample_video_2x(video):
@@ -174,8 +162,7 @@ def create_zarr_dataset(
         })
 
         try:
-            video = extract_video(item)
-            video = choose_channels(video, meta, c1, c2)
+            video = extract_video(item, c1, c2)
             clips = clip_video(video, meta, clip_frames, clip_size, clips_per_video)
         except Exception as e:
             logging.warning(f"Skipping item {i} due to error: {e}")
