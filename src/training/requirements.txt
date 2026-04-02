@@ -1,4 +1,4 @@
-h5py
+zarr
 numpy
 torch
 torchvision
