@@ -25,6 +25,8 @@ flags.DEFINE_string('train_dataset_path', 'train.zarr', 'Path to the train datas
 flags.DEFINE_string('test_dataset_path', 'test.zarr', 'Path to the test dataset.')
 flags.DEFINE_string('save_dir', 'checkpoints', 'Directory to save model checkpoints.')
 
+flags.DEFINE_integer('batch_size', 4, 'Batch size for training and evaluation.')
+
 
 def evaluate(model, dataloader, device, config):
     model.eval()
@@ -92,7 +94,7 @@ def main(_):
 
     train_dataloader = DataLoader(
         train_dataset,
-        batch_size=4,
+        batch_size=FLAGS.batch_size,
         shuffle=True,
         num_workers=4,
         pin_memory=True
@@ -100,7 +102,7 @@ def main(_):
 
     test_dataloader = DataLoader(
         test_dataset,
-        batch_size=4,
+        batch_size=FLAGS.batch_size,
         shuffle=False,
         num_workers=4,
         pin_memory=True
