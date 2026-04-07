@@ -26,6 +26,7 @@ flags.DEFINE_string('test_dataset_path', 'test.zarr', 'Path to the test dataset.
 flags.DEFINE_string('save_dir', 'checkpoints', 'Directory to save model checkpoints.')
 
 flags.DEFINE_integer('batch_size', 4, 'Batch size for training and evaluation.')
+flags.DEFINE_float('mask_ratio', 0.75, 'Ratio of patches to mask during training.')
 
 
 def evaluate(model, dataloader, device, config):
@@ -66,7 +67,7 @@ def get_seq_len(config):
     return (config.num_frames // config.tubelet_size) * (config.image_size // config.patch_size) ** 2
 
 
-def get_random_mask(batch_size, seq_len, mask_ratio=0.75):
+def get_random_mask(batch_size, seq_len, mask_ratio):
     num_masked = int(seq_len * mask_ratio)
     mask = torch.zeros(batch_size, seq_len, dtype=torch.bool)
     for i in range(batch_size):
@@ -81,6 +82,8 @@ def main(_):
     setup_wandb(project='Spaciotemporal Signaling',
                 group=FLAGS.run_group, name=exp_name)
     set_seed(FLAGS.seed)
+
+    os.makedirs(FLAGS.save_dir, exist_ok=True)
 
     train_dataset = ZarrVideoDataset(
         zarr_path=FLAGS.train_dataset_path,
@@ -128,7 +131,9 @@ def main(_):
     epochs = FLAGS.epochs
 
     eval_loss = evaluate(model, test_dataloader, device, config)
-    wandb.log({'eval_loss': eval_loss}, step=0)
+    wandb.log({'eval_loss': eval_loss})
+
+    mask_ratio = FLAGS.mask_ratio
 
     for epoch in range(1, epochs + 1):
         model.train()
@@ -136,7 +141,7 @@ def main(_):
 
             videos = videos.to(device)  # (B,T,C,H,W)
 
-            mask = get_random_mask(videos.size(0), seq_len).to(device)
+            mask = get_random_mask(videos.size(0), seq_len, mask_ratio).to(device)
             outputs = model(pixel_values=videos, bool_masked_pos=mask)
 
             loss = outputs.loss
@@ -149,7 +154,7 @@ def main(_):
 
         if epoch % FLAGS.eval_interval == 0:
             eval_loss = evaluate(model, test_dataloader, device, config)
-            wandb.log({'eval_loss': eval_loss}, step=epoch)
+            wandb.log({'eval_loss': eval_loss})
 
         if epoch % FLAGS.save_interval == 0:
             model_save_path = os.path.join(FLAGS.save_dir, f'model_epoch_{epoch}.pt')
