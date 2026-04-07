@@ -29,14 +29,14 @@ flags.DEFINE_integer('batch_size', 4, 'Batch size for training and evaluation.')
 flags.DEFINE_float('mask_ratio', 0.75, 'Ratio of patches to mask during training.')
 
 
-def evaluate(model, dataloader, device, config):
+def evaluate(model, dataloader, device, config, mask_ratio):
     model.eval()
     total_loss = 0.0
     with torch.no_grad():
         for videos in tqdm(dataloader):
             videos = videos.to(device)
 
-            mask = get_random_mask(videos.size(0), get_seq_len(config)).to(device)
+            mask = get_random_mask(videos.size(0), get_seq_len(config), mask_ratio).to(device)
             outputs = model(pixel_values=videos, bool_masked_pos=mask)
 
             total_loss += outputs.loss.item() * videos.size(0)
@@ -130,10 +130,10 @@ def main(_):
 
     epochs = FLAGS.epochs
 
-    eval_loss = evaluate(model, test_dataloader, device, config)
-    wandb.log({'eval_loss': eval_loss})
-
     mask_ratio = FLAGS.mask_ratio
+
+    eval_loss = evaluate(model, test_dataloader, device, config, mask_ratio)
+    wandb.log({'eval_loss': eval_loss})
 
     for epoch in range(1, epochs + 1):
         model.train()
@@ -153,7 +153,7 @@ def main(_):
             wandb.log({'train_loss': loss.item()})
 
         if epoch % FLAGS.eval_interval == 0:
-            eval_loss = evaluate(model, test_dataloader, device, config)
+            eval_loss = evaluate(model, test_dataloader, device, config, mask_ratio)
             wandb.log({'eval_loss': eval_loss})
 
         if epoch % FLAGS.save_interval == 0:
