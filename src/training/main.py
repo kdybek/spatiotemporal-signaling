@@ -21,12 +21,17 @@ flags.DEFINE_integer('seed', 0, 'Random seed.')
 flags.DEFINE_integer('epochs', 5, 'Number of training epochs.')
 flags.DEFINE_integer('eval_interval', 1, 'Evaluation interval.')
 flags.DEFINE_integer('save_interval', 5, 'Saving interval.')
-flags.DEFINE_string('train_dataset_path', 'train.zarr', 'Path to the train dataset.')
-flags.DEFINE_string('test_dataset_path', 'test.zarr', 'Path to the test dataset.')
-flags.DEFINE_string('save_dir', 'checkpoints', 'Directory to save model checkpoints.')
+flags.DEFINE_string('train_dataset_path', 'train.zarr',
+                    'Path to the train dataset.')
+flags.DEFINE_string('test_dataset_path', 'test.zarr',
+                    'Path to the test dataset.')
+flags.DEFINE_string('save_dir', 'checkpoints',
+                    'Directory to save model checkpoints.')
 
-flags.DEFINE_integer('batch_size', 4, 'Batch size for training and evaluation.')
-flags.DEFINE_float('mask_ratio', 0.75, 'Ratio of patches to mask during training.')
+flags.DEFINE_integer(
+    'batch_size', 4, 'Batch size for training and evaluation.')
+flags.DEFINE_float('mask_ratio', 0.75,
+                   'Ratio of patches to mask during training.')
 
 
 def evaluate(model, dataloader, device, config, mask_ratio):
@@ -36,7 +41,8 @@ def evaluate(model, dataloader, device, config, mask_ratio):
         for videos in tqdm(dataloader):
             videos = videos.to(device)
 
-            mask = get_random_mask(videos.size(0), get_seq_len(config), mask_ratio).to(device)
+            mask = get_random_mask(videos.size(
+                0), get_seq_len(config), mask_ratio).to(device)
             outputs = model(pixel_values=videos, bool_masked_pos=mask)
 
             total_loss += outputs.loss.item() * videos.size(0)
@@ -69,10 +75,14 @@ def get_seq_len(config):
 
 def get_random_mask(batch_size, seq_len, mask_ratio):
     num_masked = int(seq_len * mask_ratio)
-    mask = torch.zeros(batch_size, seq_len, dtype=torch.bool)
-    for i in range(batch_size):
-        masked_indices = torch.randperm(seq_len)[:num_masked]
-        mask[i, masked_indices] = True
+
+    noise = torch.rand(batch_size, seq_len)
+    ids_shuffle = torch.argsort(noise, dim=1)
+
+    mask = torch.ones(batch_size, seq_len, dtype=torch.bool)
+    mask.scatter_(1, ids_shuffle[:, :num_masked], True)
+    mask.scatter_(1, ids_shuffle[:, num_masked:], False)
+
     return mask
 
 
@@ -141,7 +151,8 @@ def main(_):
 
             videos = videos.to(device)  # (B,T,C,H,W)
 
-            mask = get_random_mask(videos.size(0), seq_len, mask_ratio).to(device)
+            mask = get_random_mask(videos.size(
+                0), seq_len, mask_ratio).to(device)
             outputs = model(pixel_values=videos, bool_masked_pos=mask)
 
             loss = outputs.loss
@@ -153,11 +164,13 @@ def main(_):
             wandb.log({'train_loss': loss.item()})
 
         if epoch % FLAGS.eval_interval == 0:
-            eval_loss = evaluate(model, test_dataloader, device, config, mask_ratio)
+            eval_loss = evaluate(model, test_dataloader,
+                                 device, config, mask_ratio)
             wandb.log({'eval_loss': eval_loss})
 
         if epoch % FLAGS.save_interval == 0:
-            model_save_path = os.path.join(FLAGS.save_dir, f'model_epoch_{epoch}.pt')
+            model_save_path = os.path.join(
+                FLAGS.save_dir, f'model_epoch_{epoch}.pt')
             torch.save(model.state_dict(), model_save_path)
             wandb.save(model_save_path)
 
