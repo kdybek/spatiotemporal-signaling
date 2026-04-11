@@ -5,6 +5,7 @@ import logging
 import zarr
 import tifffile as tiff
 import numpy as np
+import math
 from tqdm import tqdm
 
 
@@ -73,7 +74,8 @@ def extract_video(item, c1, c2):
             channel = load_tiff(tiff_path)
 
             if channel.shape[1] != 1:
-                raise ValueError(f"Expected single channel in {tiff_path}, but got shape {channel.shape}")
+                raise ValueError(f"Expected single channel in {
+                                 tiff_path}, but got shape {channel.shape}")
 
             channels.append(channel)
 
@@ -92,32 +94,38 @@ def downsample_video_2x(video):
     ) / 4.0
 
 
-def clip_video(video, meta, clip_frames, clip_size, clips_per_video):
-    if meta["Acq_freq_min"] != 5:
-        raise ValueError(f"Expected Acq_freq_min=5, but got {
-                         meta['Acq_freq_min']}")  # Don't handle for now
+def clip_video(video, magnification, original_acq_freq, clip_frames, acq_freq, clip_size, clips_per_video):
+    step = acq_freq / original_acq_freq
 
-    if meta["Magnification"] == 40:
+    if not math.isclose(step, round(step), tolerance=1e-5):
+        raise ValueError(f"Acq_freq {acq_freq} is not an integer multiple of video Acq_freq_min {
+                         original_acq_freq}")
+
+    step = int(round(step))
+
+    if magnification == 40:
         downsample_2x = True
         clip_size *= 2  # We need to double the clip size to get the same field of view
-    elif meta["Magnification"] == 20:
+    elif magnification == 20:
         downsample_2x = False
     else:
-        raise ValueError(f"Unsupported Magnification {meta['Magnification']}")
+        raise ValueError(f"Unsupported Magnification {magnification}")
 
     T, C, H, W = video.shape
     clips = []
 
-    if T < clip_frames or H < clip_size or W < clip_size:
+    # Total frames needed to get clip_frames with the given step
+    min_frames_needed = clip_frames * step - (step - 1)
+    if T < min_frames_needed or H < clip_size or W < clip_size:
         raise ValueError(f"Video shape {video.shape} is smaller than clip requirements: "
                          f"clip_frames={clip_frames}, clip_size={clip_size}")
 
     for _ in range(clips_per_video):
-        start_t = np.random.randint(0, T - clip_frames + 1)
+        start_t = np.random.randint(0, T - min_frames_needed + 1)
         start_h = np.random.randint(0, H - clip_size + 1)
         start_w = np.random.randint(0, W - clip_size + 1)
 
-        clip = video[start_t:start_t + clip_frames, :,
+        clip = video[start_t:start_t + min_frames_needed:step, :,
                      start_h:start_h + clip_size, start_w:start_w + clip_size]
 
         if downsample_2x:
@@ -135,6 +143,7 @@ def create_zarr_dataset(
         items,
         out_path,
         clip_frames,
+        acq_freq,
         clip_size,
         clips_per_video,
         c1,
@@ -156,14 +165,19 @@ def create_zarr_dataset(
     all_meta = []
     for i, item in enumerate(tqdm(items)):
         meta = item["Metadata"]
+        # Original acquisition frequency in minutes
+        original_acq_freq = meta["Acq_freq_min"]
+        magnification = meta["Magnification"]
         meta.update({
             "C1": c1,
             "C2": c2,
+            "Acq_freq_min": acq_freq,  # Update to target acquisition frequency
         })
 
         try:
             video = extract_video(item, c1, c2)
-            clips = clip_video(video, meta, clip_frames, clip_size, clips_per_video)
+            clips = clip_video(video, magnification, original_acq_freq,
+                               clip_frames, acq_freq, clip_size, clips_per_video)
         except Exception as e:
             logging.warning(f"Skipping item {i} due to error: {e}")
             continue
@@ -215,7 +229,14 @@ def main():
         "--clips_per_video",
         type=int,
         default=16,
-        help="Number of clips to extract per video (default: 4)"
+        help="Number of clips to extract per video (default: 16)"
+    )
+
+    parser.add_argument(
+        "--acq_freq",
+        type=int,
+        default=30,
+        help="Acquisition frequency in minutes (default: 30)"
     )
 
     parser.add_argument(
@@ -257,7 +278,7 @@ def main():
 
     logging.info(f"Loaded {len(items)} items from PKL.")
 
-    create_zarr_dataset(items, args.output, args.clip_frames,
+    create_zarr_dataset(items, args.output, args.clip_frames, args.acq_freq,
                         args.clip_size, args.clips_per_video, args.c1, args.c2)
 
     logging.info(f"Zarr dataset created at {args.output}")
