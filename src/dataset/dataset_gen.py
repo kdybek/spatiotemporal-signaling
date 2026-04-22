@@ -100,7 +100,6 @@ def create_zarr_dataset(
             name=f"{idx}",
             data=video,
             chunks=(16, video.shape[1], 224, 224),
-            dtype="uint16",
             compressors=compressors,
         )
         idx += 1
