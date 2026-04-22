@@ -120,8 +120,10 @@ def process_split_channel_matched_tiffs(tiff_paths, exp_metadata):
     channels = [k for k in exp_metadata if k.startswith("Ch_")]
 
     channel_metadata = {}
-    channel_mapping = {}
+    channel_mapping = {"Split_channels": True}
+    channel_paths = []
 
+    channel_idx = 0
     for channel in channels:
         channel_pattern = exp_metadata[channel]
         # Possible edge case: channel C1 mathing with WellC1
@@ -137,7 +139,11 @@ def process_split_channel_matched_tiffs(tiff_paths, exp_metadata):
                              channel_pattern}' for channel {channel}: {channel_tiff_paths}.")
 
         channel_metadata[f"{channel}_tiff"] = str(channel_tiff_paths[0])
-        channel_mapping[channel] = str(channel_tiff_paths[0])
+        channel_metadata[f"{channel}"] = channel_idx
+        channel_paths.append(str(channel_tiff_paths[0]))
+        channel_idx += 1
+
+    channel_mapping["Paths"] = channel_paths
 
     return channel_mapping, channel_metadata
 
@@ -147,7 +153,10 @@ def process_non_split_channel_matched_tiffs(tiff_paths, exp_metadata):
         raise ValueError(
             f"Expected exactly one TIFF path for non-split-channel experiment, but got {tiff_paths}.")
 
-    channel_mapping = {"All_channels": str(tiff_paths[0])}
+    channel_mapping = {
+        "Split_channels": False,
+        "Path": str(tiff_paths[0])
+    }
 
     channels = [k for k in exp_metadata if k.startswith("Ch_")]
 
@@ -155,8 +164,7 @@ def process_non_split_channel_matched_tiffs(tiff_paths, exp_metadata):
 
     for channel in channels:
         channel_num = int(exp_metadata[channel])
-        channel_metadata[f"{channel}_tiff_idx"] = channel_num - 1
-        channel_mapping[channel] = channel_num - 1
+        channel_metadata[f"{channel}"] = channel_num - 1
 
     channel_metadata["All_channels_tiff"] = str(tiff_paths[0])
 
