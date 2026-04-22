@@ -18,9 +18,9 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string('run_group', 'Debug', 'Run group.')
 flags.DEFINE_integer('seed', 0, 'Random seed.')
 
-flags.DEFINE_integer('epochs', 5, 'Number of training epochs.')
-flags.DEFINE_integer('eval_interval', 1, 'Evaluation interval.')
-flags.DEFINE_integer('save_interval', 5, 'Saving interval.')
+flags.DEFINE_integer('steps', 600_000, 'Number of training steps.')
+flags.DEFINE_integer('eval_interval', 100_000, 'Evaluation interval.')
+flags.DEFINE_integer('save_interval', 300_000, 'Saving interval.')
 flags.DEFINE_string('train_dataset_path', 'train.zarr',
                     'Path to the train dataset.')
 flags.DEFINE_string('test_dataset_path', 'test.zarr',
@@ -28,10 +28,18 @@ flags.DEFINE_string('test_dataset_path', 'test.zarr',
 flags.DEFINE_string('save_dir', 'checkpoints',
                     'Directory to save model checkpoints.')
 
+flags.DEFINE_float('learning_rate', 1e-4, 'Learning rate for the optimizer.')
 flags.DEFINE_integer(
     'batch_size', 4, 'Batch size for training and evaluation.')
 flags.DEFINE_float('mask_ratio', 0.75,
                    'Ratio of patches to mask during training.')
+flags.DEFINE_integer('tubelet_size', 2, 'Size of tubelets (temporal dimension).')
+flags.DEFINE_integer('patch_size', 16, 'Size of spatial patches.')
+flags.DEFINE_string('transforms', 'arcsinh percentile_norm',
+                    'Space-separated list of transforms to apply to the videos. Supported: percentile_norm, arcsinh, log1p.')
+flags.DEFINE_float('arcsinh_cofactor', 5.0,
+                   'Cofactor for arcsinh transform. Only used if "arcsinh" is in the transforms list.')
+flags.DEFINE_bool('augment', True, 'Whether to apply data augmentation (random flips) during training.')
 
 
 def evaluate(model, dataloader, device, config, mask_ratio):
@@ -98,11 +106,17 @@ def main(_):
     train_dataset = ZarrVideoDataset(
         zarr_path=FLAGS.train_dataset_path,
         dataset_key="Data",
+        transform_names=FLAGS.transforms,
+        arcsinh_cofactor=FLAGS.arcsinh_cofactor,
+        augment=FLAGS.augment,
     )
 
     test_dataset = ZarrVideoDataset(
         zarr_path=FLAGS.test_dataset_path,
         dataset_key="Data",
+        transform_names=FLAGS.transforms,
+        arcsinh_cofactor=FLAGS.arcsinh_cofactor,
+        augment=False,  # No augmentation for test set
     )
 
     train_dataloader = DataLoader(
@@ -130,29 +144,32 @@ def main(_):
         num_frames=T,
         image_size=H,
         num_channels=C,
+        tubelet_size=FLAGS.tubelet_size,
+        patch_size=FLAGS.patch_size,
     )
     seq_len = get_seq_len(config)
 
     model = VideoMAEForPreTraining(config)
     model.to(device)
 
-    optimizer = AdamW(model.parameters(), lr=1e-4)
-
-    epochs = FLAGS.epochs
+    optimizer = AdamW(model.parameters(), lr=FLAGS.learning_rate)
 
     mask_ratio = FLAGS.mask_ratio
 
     eval_loss = evaluate(model, test_dataloader, device, config, mask_ratio)
-    wandb.log({'eval_loss': eval_loss})
+    wandb.log({'eval_loss': eval_loss}, step=0)
 
-    for epoch in range(1, epochs + 1):
-        model.train()
+    step = 1
+    metrics = {}
+    while step < FLAGS.steps:
         for videos in tqdm(train_dataloader):
 
             videos = videos.to(device)  # (B,T,C,H,W)
 
             mask = get_random_mask(videos.size(
                 0), seq_len, mask_ratio).to(device)
+
+            model.train()
             outputs = model(pixel_values=videos, bool_masked_pos=mask)
 
             loss = outputs.loss
@@ -161,18 +178,25 @@ def main(_):
             loss.backward()
             optimizer.step()
 
-            wandb.log({'train_loss': loss.item()})
+            metrics['train_loss'] = loss.item()
 
-        if epoch % FLAGS.eval_interval == 0:
-            eval_loss = evaluate(model, test_dataloader,
-                                 device, config, mask_ratio)
-            wandb.log({'eval_loss': eval_loss})
+            if step % FLAGS.eval_interval == 0:
+                eval_loss = evaluate(model, test_dataloader,
+                                     device, config, mask_ratio)
+                metrics['eval_loss'] = eval_loss
 
-        if epoch % FLAGS.save_interval == 0:
-            model_save_path = os.path.join(
-                FLAGS.save_dir, f'model_epoch_{epoch}.pt')
-            torch.save(model.state_dict(), model_save_path)
-            wandb.save(model_save_path)
+            if step % FLAGS.save_interval == 0:
+                model_save_path = os.path.join(
+                    FLAGS.save_dir, f'model_step_{step}.pt')
+                torch.save(model.state_dict(), model_save_path)
+                wandb.save(model_save_path)
+
+            wandb.log(metrics, step=step)
+            metrics = {}
+
+            step += 1
+            if step >= FLAGS.steps:
+                break
 
 
 if __name__ == '__main__':
