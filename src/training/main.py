@@ -3,7 +3,7 @@ import numpy as np
 from transformers import VideoMAEForPreTraining, VideoMAEConfig
 from torch.optim import AdamW
 from tqdm import tqdm
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, random_split
 from absl import app, flags
 import random
 import os
@@ -31,10 +31,15 @@ flags.DEFINE_string('save_dir', 'checkpoints',
 flags.DEFINE_float('learning_rate', 1e-4, 'Learning rate for the optimizer.')
 flags.DEFINE_integer(
     'batch_size', 4, 'Batch size for training and evaluation.')
+flags.DEFINE_float('train_split', 0.8, 'Proportion of data to use for training (rest is for validation).')
 flags.DEFINE_float('mask_ratio', 0.75,
                    'Ratio of patches to mask during training.')
 flags.DEFINE_integer('tubelet_size', 2, 'Size of tubelets (temporal dimension).')
 flags.DEFINE_integer('patch_size', 16, 'Size of spatial patches.')
+flags.DEFINE_integer('clip_size', 224, 'Height and width of input images.')
+flags.DEFINE_integer('clip_frames', 16, 'Number of frames in each video clip.')
+flags.DEFINE_integer('acq_freq', 30, 'Acquisition frequency (in minutes) for sampling video clips.')
+flags.DEFINE_string('channel_names', 'Ch_H2B Ch_ERK-KTR', 'Space-separated list of channel names to use from the videos.')
 flags.DEFINE_string('transforms', 'arcsinh percentile_norm',
                     'Space-separated list of transforms to apply to the videos. Supported: percentile_norm, arcsinh, log1p.')
 flags.DEFINE_float('arcsinh_cofactor', 5.0,
@@ -95,7 +100,6 @@ def get_random_mask(batch_size, seq_len, mask_ratio):
 
 
 def main(_):
-    # Set up logger.
     exp_name = get_exp_name(FLAGS.seed)
     setup_wandb(project='Spaciotemporal Signaling',
                 group=FLAGS.run_group, name=exp_name)
@@ -103,21 +107,19 @@ def main(_):
 
     os.makedirs(FLAGS.save_dir, exist_ok=True)
 
-    train_dataset = ZarrVideoDataset(
+    dataset = ZarrVideoDataset(
         zarr_path=FLAGS.train_dataset_path,
-        dataset_key="Data",
+        clip_frames=FLAGS.clip_frames,
+        clip_size=FLAGS.clip_size,
+        acq_freq=FLAGS.acq_freq,
         transform_names=FLAGS.transforms,
         arcsinh_cofactor=FLAGS.arcsinh_cofactor,
         augment=FLAGS.augment,
     )
 
-    test_dataset = ZarrVideoDataset(
-        zarr_path=FLAGS.test_dataset_path,
-        dataset_key="Data",
-        transform_names=FLAGS.transforms,
-        arcsinh_cofactor=FLAGS.arcsinh_cofactor,
-        augment=False,  # No augmentation for test set
-    )
+    train_size = int(len(dataset) * FLAGS.train_split)
+    test_size = len(dataset) - train_size
+    train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
 
     train_dataloader = DataLoader(
         train_dataset,
