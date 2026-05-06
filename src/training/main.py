@@ -21,42 +21,116 @@ flags.DEFINE_integer('seed', 0, 'Random seed.')
 flags.DEFINE_integer('steps', 600_000, 'Number of training steps.')
 flags.DEFINE_integer('eval_interval', 100_000, 'Evaluation interval.')
 flags.DEFINE_integer('save_interval', 300_000, 'Saving interval.')
-flags.DEFINE_string('train_dataset_path', 'train.zarr',
+flags.DEFINE_string('dataset_path', 'toy_dataset.zarr',
                     'Path to the train dataset.')
-flags.DEFINE_string('test_dataset_path', 'test.zarr',
-                    'Path to the test dataset.')
 flags.DEFINE_string('save_dir', 'checkpoints',
                     'Directory to save model checkpoints.')
 
 flags.DEFINE_float('learning_rate', 1e-4, 'Learning rate for the optimizer.')
 flags.DEFINE_integer(
     'batch_size', 4, 'Batch size for training and evaluation.')
-flags.DEFINE_float('train_split', 0.8, 'Proportion of data to use for training (rest is for validation).')
+flags.DEFINE_float('train_split', 0.8,
+                   'Proportion of data to use for training (rest is for validation).')
 flags.DEFINE_float('mask_ratio', 0.75,
                    'Ratio of patches to mask during training.')
 flags.DEFINE_integer('tubelet_size', 2, 'Size of tubelets (temporal dimension).')
 flags.DEFINE_integer('patch_size', 16, 'Size of spatial patches.')
 flags.DEFINE_integer('clip_size', 224, 'Height and width of input images.')
 flags.DEFINE_integer('clip_frames', 16, 'Number of frames in each video clip.')
-flags.DEFINE_integer('acq_freq', 30, 'Acquisition frequency (in minutes) for sampling video clips.')
-flags.DEFINE_string('channel_names', 'Ch_H2B Ch_ERK-KTR', 'Space-separated list of channel names to use from the videos.')
+flags.DEFINE_integer(
+    'acq_freq', 30, 'Acquisition frequency (in minutes) for sampling video clips.')
+flags.DEFINE_string('channel_names', 'Ch_ERK-KTR',
+                    'Space-separated list of channel names to use from the videos.')
 flags.DEFINE_string('transforms', 'arcsinh percentile_norm',
                     'Space-separated list of transforms to apply to the videos. Supported: percentile_norm, arcsinh, log1p.')
 flags.DEFINE_float('arcsinh_cofactor', 5.0,
                    'Cofactor for arcsinh transform. Only used if "arcsinh" is in the transforms list.')
-flags.DEFINE_bool('augment', True, 'Whether to apply data augmentation (random flips) during training.')
+flags.DEFINE_bool(
+    'augment', True, 'Whether to apply data augmentation (random flips) during training.')
+
+
+def patchify(videos, tubelet_size, patch_size):
+    B, T, C, H, W = videos.shape
+    assert T % tubelet_size == 0, "Number of frames must be divisible by tubelet size."
+    assert H % patch_size == 0 and W % patch_size == 0, "Height and width must be divisible by patch size."
+
+    num_tubelets = T // tubelet_size
+    num_patches_h = H // patch_size
+    num_patches_w = W // patch_size
+
+    videos = videos.view(B, num_tubelets, tubelet_size, C,
+                         num_patches_h, patch_size, num_patches_w, patch_size)
+    videos = videos.permute(0, 1, 4, 6, 2, 3, 5, 7).contiguous()
+    videos = videos.view(B, num_tubelets * num_patches_h *
+                         num_patches_w, tubelet_size * C * patch_size * patch_size)
+
+    return videos
+
+
+def unpatchify(patches, tubelet_size, patch_size, num_frames, image_size):
+    B, N, D = patches.shape
+    num_tubelets = num_frames // tubelet_size
+    num_patches_h = image_size // patch_size
+    num_patches_w = image_size // patch_size
+
+    videos = patches.view(B, num_tubelets, num_patches_h,
+                          num_patches_w, tubelet_size, -1, patch_size, patch_size)
+    videos = videos.permute(0, 1, 4, 5, 2, 6, 3, 7).contiguous()
+    videos = videos.view(B, num_frames, -1, image_size, image_size)
+
+    return videos
+
+
+def reconstruct_videos_from_patches(videos, reconstructed_patches, mask, tubelet_size, patch_size, num_frames, image_size):
+    B, T, C, H, W = videos.shape
+    patches = patchify(videos, tubelet_size, patch_size).clone()
+    patches[mask] = reconstructed_patches
+    reconstructed_videos = unpatchify(
+        patches, tubelet_size, patch_size, num_frames, image_size)
+
+    return reconstructed_videos
 
 
 def evaluate(model, dataloader, device, config, mask_ratio):
     model.eval()
     total_loss = 0.0
+
     with torch.no_grad():
-        for videos in tqdm(dataloader):
+        for i, videos in tqdm(enumerate(dataloader)):
             videos = videos.to(device)
 
             mask = get_random_mask(videos.size(
                 0), get_seq_len(config), mask_ratio).to(device)
             outputs = model(pixel_values=videos, bool_masked_pos=mask)
+
+            if i == 0:
+                rec_videos = reconstruct_videos_from_patches(
+                    videos.cpu(),
+                    outputs.logits.cpu(),
+                    mask.cpu(),
+                    config.tubelet_size,
+                    config.patch_size,
+                    config.num_frames,
+                    config.image_size
+                ).numpy()
+
+                original_video = videos[0].cpu().numpy()
+                rec_video = rec_videos[0]
+                original_video = np.clip(original_video, 0, 1)
+                rec_video = np.clip(rec_video, 0, 1)
+                original_video = (original_video.clip(0, 1) * 255).astype(np.uint8)
+                rec_video = (rec_video * 255).astype(np.uint8)
+
+                num_channels = original_video.shape[1]
+                for ch in range(num_channels):
+                    og_video_ch = np.repeat(original_video[:, ch:ch+1, ...], 3, axis=1)
+                    rec_video_ch = np.repeat(rec_video[:, ch:ch+1, ...], 3, axis=1)
+                    print(f"original channel {ch} shape:", og_video_ch.shape)
+                    print(f"reconstructed channel {ch} shape:", rec_video_ch.shape)
+                    wandb.log({
+                        f'original_channel_{ch}': wandb.Video(og_video_ch, fps=4, format="mp4"),
+                        f'reconstructed_channel_{ch}': wandb.Video(rec_video_ch, fps=4, format="mp4")
+                    })
 
             total_loss += outputs.loss.item() * videos.size(0)
 
@@ -108,11 +182,12 @@ def main(_):
     os.makedirs(FLAGS.save_dir, exist_ok=True)
 
     dataset = ZarrVideoDataset(
-        zarr_path=FLAGS.train_dataset_path,
+        zarr_path=FLAGS.dataset_path,
         clip_frames=FLAGS.clip_frames,
         clip_size=FLAGS.clip_size,
         acq_freq=FLAGS.acq_freq,
         transform_names=FLAGS.transforms,
+        channel_names=FLAGS.channel_names,
         arcsinh_cofactor=FLAGS.arcsinh_cofactor,
         augment=FLAGS.augment,
     )
@@ -120,6 +195,7 @@ def main(_):
     train_size = int(len(dataset) * FLAGS.train_split)
     test_size = len(dataset) - train_size
     train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
+    test_dataset.augment = False  # Disable augmentation for the test dataset
 
     train_dataloader = DataLoader(
         train_dataset,
@@ -160,10 +236,11 @@ def main(_):
 
     eval_loss = evaluate(model, test_dataloader, device, config, mask_ratio)
     wandb.log({'eval_loss': eval_loss}, step=0)
+    print(f'Initial evaluation loss: {eval_loss:.4f}')
 
     step = 1
     metrics = {}
-    while step < FLAGS.steps:
+    while step < FLAGS.steps + 1:
         for videos in tqdm(train_dataloader):
 
             videos = videos.to(device)  # (B,T,C,H,W)
@@ -194,10 +271,12 @@ def main(_):
                 wandb.save(model_save_path)
 
             wandb.log(metrics, step=step)
+            print(f"Step {step}: " +
+                  ", ".join([f"{k}={v:.4f}" for k, v in metrics.items()]))
             metrics = {}
 
             step += 1
-            if step >= FLAGS.steps:
+            if step > FLAGS.steps:
                 break
 
 

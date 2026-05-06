@@ -32,7 +32,7 @@ def get_clip(root, video_name, clip_frames, clip_size, acq_freq, channel_names_l
     magnification = video_metadata["Magnification"]
     step = acq_freq / original_acq_freq
 
-    if not math.isclose(step, round(step), tolerance=1e-5):
+    if not math.isclose(step, round(step), abs_tol=1e-5):
         raise ValueError(f"Acq_freq {acq_freq} is not an integer multiple of video Acq_freq_min {
                          original_acq_freq}")
 
@@ -108,6 +108,8 @@ class ZarrVideoDataset(Dataset):
 
             self._legal_video_names.append(video_name)
 
+        print(f"Found {len(self._legal_video_names)} viable videos out of {len(self.root)} total videos.")
+
     def __len__(self):
         return len(self._legal_video_names)
 
@@ -127,12 +129,12 @@ class ZarrVideoDataset(Dataset):
         for transform_name in self.transform_names_list:
             if transform_name == "percentile_norm":
                 video = percentile_norm(video)
-            if transform_name == "arcsinh":
+            elif transform_name == "arcsinh":
                 if self.arcsinh_cofactor is None:
                     raise ValueError(
                         "arcsinh_cofactor must be provided for arcsinh transform.")
                 video = np.arcsinh(video / self.arcsinh_cofactor)
-            if transform_name == "log1p":
+            elif transform_name == "log1p":
                 video = np.log1p(video)
             else:
                 raise ValueError(f"Unknown transform: {transform_name}")
@@ -140,10 +142,10 @@ class ZarrVideoDataset(Dataset):
         if self.augment:
             # Random horizontal flip
             if np.random.rand() < 0.5:
-                video = video[:, :, :, ::-1]
+                video = video[:, :, :, ::-1].copy()
 
             # Random vertical flip
             if np.random.rand() < 0.5:
-                video = video[:, :, ::-1, :]
+                video = video[:, :, ::-1, :].copy()
 
         return video
