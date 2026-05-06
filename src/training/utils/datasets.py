@@ -23,7 +23,7 @@ def downsample_video_2x(video):
     ) / 4.0
 
 
-def get_clip(root, video_name, clip_frames, clip_size, acq_freq, channel_names_list, validation=False):
+def get_clip(root, video_name, clip_frames, clip_size, acq_freq, channel_names_list, random_crop, validation=False):
     video_shape = root[video_name].shape
     video_metadata = root[video_name].attrs["Metadata"]
     channel_indices = [video_metadata[name] for name in channel_names_list]
@@ -55,9 +55,14 @@ def get_clip(root, video_name, clip_frames, clip_size, acq_freq, channel_names_l
     if validation:  # This is ugly, but all the things that can be wrong with the video should be caught up to this point
         return
 
-    start_t = np.random.randint(0, T - min_frames_needed + 1)
-    start_h = np.random.randint(0, H - clip_size + 1)
-    start_w = np.random.randint(0, W - clip_size + 1)
+    if random_crop:
+        start_t = np.random.randint(0, T - min_frames_needed + 1)
+        start_h = np.random.randint(0, H - clip_size + 1)
+        start_w = np.random.randint(0, W - clip_size + 1)
+    else:
+        start_t = (T - min_frames_needed) // 2
+        start_h = (H - clip_size) // 2
+        start_w = (W - clip_size) // 2
 
     clip = root[video_name][start_t:start_t + min_frames_needed:step, channel_indices,
                             start_h:start_h + clip_size, start_w:start_w + clip_size]
@@ -78,6 +83,7 @@ class ZarrVideoDataset(Dataset):
         channel_names,
         transform_names,
         augment,
+        random_crop,
         arcsinh_cofactor=None,
     ):
         self.root = zarr.open(zarr_path, mode="r")
@@ -88,6 +94,7 @@ class ZarrVideoDataset(Dataset):
         self.transform_names_list = transform_names.split()
         self.arcsinh_cofactor = arcsinh_cofactor
         self.augment = augment
+        self.random_crop = random_crop
 
         self._legal_video_names = []
 
@@ -100,6 +107,7 @@ class ZarrVideoDataset(Dataset):
                     self.clip_size,
                     self.acq_freq,
                     self.channel_names_list,
+                    self.random_crop,
                     validation=True,
                 )
             except ValueError as e:
@@ -122,6 +130,7 @@ class ZarrVideoDataset(Dataset):
             self.clip_size,
             self.acq_freq,
             self.channel_names_list,
+            self.random_crop,
         )
 
         video = video.astype("float32")

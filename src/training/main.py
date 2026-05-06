@@ -47,6 +47,12 @@ flags.DEFINE_float('arcsinh_cofactor', 5.0,
                    'Cofactor for arcsinh transform. Only used if "arcsinh" is in the transforms list.')
 flags.DEFINE_bool(
     'augment', True, 'Whether to apply data augmentation (random flips) during training.')
+flags.DEFINE_bool(
+    'random_crop', True, 'Whether to apply random cropping to the video clips during training.')
+flags.DEFINE_integer(
+    'eval_traj_len', 16, 'Number of overlapping clips for the trajectory experimens.')
+flags.DEFINE_integer(
+    'eval_traj_stride', 4, 'Stride between overlapping clips for the trajectory experimens.')
 
 
 def patchify(videos, tubelet_size, patch_size):
@@ -91,19 +97,34 @@ def reconstruct_videos_from_patches(videos, reconstructed_patches, mask, tubelet
     return reconstructed_videos
 
 
-def evaluate(model, dataloader, device, config, mask_ratio):
+def split_video_batch_into_overlapping_clips(videos, clip_frames, traj_len, traj_stride):
+    B, T, C, H, W = videos.shape
+    clips = []
+    for start in range(0, T - clip_frames + 1, traj_stride):
+        clip = videos[:, start:start+clip_frames, ...]
+        clips.append(clip)
+        if len(clips) == traj_len:
+            break
+
+    return clips
+
+
+def evaluate_masked(model, dataloader, device, config, mask_ratio):
     model.eval()
     total_loss = 0.0
+    first_visualization_done = False
+    metrics = {}
 
     with torch.no_grad():
-        for i, videos in tqdm(enumerate(dataloader)):
+        for videos in tqdm(dataloader):
+            videos = videos[:, :config.num_frames, ...]  # Ensure videos have the expected number of frames
             videos = videos.to(device)
 
             mask = get_random_mask(videos.size(
                 0), get_seq_len(config), mask_ratio).to(device)
-            outputs = model(pixel_values=videos, bool_masked_pos=mask)
+            outputs = model(pixel_values=videos, bool_masked_pos=mask, output_hidden_states=True)
 
-            if i == 0:
+            if not first_visualization_done:
                 rec_videos = reconstruct_videos_from_patches(
                     videos.cpu(),
                     outputs.logits.cpu(),
@@ -125,17 +146,42 @@ def evaluate(model, dataloader, device, config, mask_ratio):
                 for ch in range(num_channels):
                     og_video_ch = np.repeat(original_video[:, ch:ch+1, ...], 3, axis=1)
                     rec_video_ch = np.repeat(rec_video[:, ch:ch+1, ...], 3, axis=1)
-                    print(f"original channel {ch} shape:", og_video_ch.shape)
-                    print(f"reconstructed channel {ch} shape:", rec_video_ch.shape)
-                    wandb.log({
-                        f'original_channel_{ch}': wandb.Video(og_video_ch, fps=4, format="mp4"),
-                        f'reconstructed_channel_{ch}': wandb.Video(rec_video_ch, fps=4, format="mp4")
-                    })
+                    metrics[f'original_channel_{ch}'] = wandb.Video(og_video_ch, fps=4, format="mp4")
+                    metrics[f'reconstructed_channel_{ch}'] = wandb.Video(rec_video_ch, fps=4, format="mp4")
 
-            total_loss += outputs.loss.item() * videos.size(0)
+                first_visualization_done = True
+
+        total_loss += outputs.loss.item() * videos.size(0)
 
     avg_loss = total_loss / len(dataloader.dataset)
-    return avg_loss
+    metrics['eval_loss'] = avg_loss
+
+    return metrics
+
+
+def evaluate_cluster(model, dataloader, device, config, traj_len, traj_stride):
+    model.eval()
+    latent_trajs = []
+
+    with torch.no_grad():
+        for videos in tqdm(dataloader):
+            clips = split_video_batch_into_overlapping_clips(
+                videos, config.num_frames, traj_len, traj_stride)
+
+            traj = []
+            for clip in clips:
+                clip = clip.to(device)
+                mask = torch.zeros((clip.size(0), get_seq_len(config)), dtype=torch.bool).to(device)
+                outputs = model(pixel_values=clip, bool_masked_pos=mask, output_hidden_states=True)
+                latent = outputs.hidden_states[-1].mean(dim=1)  # (B, D)
+                assert len(latent.shape) == 2, "Expected features to be of shape (B, D)"
+                traj.append(latent.cpu().unsqueeze(1))  # (B, 1, D)
+
+            traj = torch.cat(traj, dim=1)  # (B, traj_len, D)
+            latent_trajs.append(traj)
+
+    latent_trajs = torch.cat(latent_trajs, dim=0)  # (N, traj_len, D)
+    return latent_trajs
 
 
 def set_seed(seed):
@@ -181,21 +227,30 @@ def main(_):
 
     os.makedirs(FLAGS.save_dir, exist_ok=True)
 
+    eval_clip_frames = FLAGS.clip_frames + \
+        (FLAGS.eval_traj_len - 1) * FLAGS.eval_traj_stride
+
     dataset = ZarrVideoDataset(
         zarr_path=FLAGS.dataset_path,
-        clip_frames=FLAGS.clip_frames,
+        # This is hacky but it allows us to use the same dataset for both training and evaluation,
+        # even though we need longer clips only for the trajectory experiments during evaluation.
+        clip_frames=eval_clip_frames,
         clip_size=FLAGS.clip_size,
         acq_freq=FLAGS.acq_freq,
         transform_names=FLAGS.transforms,
         channel_names=FLAGS.channel_names,
         arcsinh_cofactor=FLAGS.arcsinh_cofactor,
         augment=FLAGS.augment,
+        random_crop=FLAGS.random_crop
     )
 
     train_size = int(len(dataset) * FLAGS.train_split)
     test_size = len(dataset) - train_size
     train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
+    # Use the original clip length for training
+    train_dataset.clip_frames = FLAGS.clip_frames
     test_dataset.augment = False  # Disable augmentation for the test dataset
+    test_dataset.random_crop = False  # Disable random cropping for the test dataset
 
     train_dataloader = DataLoader(
         train_dataset,
@@ -234,9 +289,8 @@ def main(_):
 
     mask_ratio = FLAGS.mask_ratio
 
-    eval_loss = evaluate(model, test_dataloader, device, config, mask_ratio)
-    wandb.log({'eval_loss': eval_loss}, step=0)
-    print(f'Initial evaluation loss: {eval_loss:.4f}')
+    eval_metrics = evaluate_masked(model, test_dataloader, device, config, mask_ratio)
+    wandb.log(eval_metrics, step=0)
 
     step = 1
     metrics = {}
@@ -260,9 +314,9 @@ def main(_):
             metrics['train_loss'] = loss.item()
 
             if step % FLAGS.eval_interval == 0:
-                eval_loss = evaluate(model, test_dataloader,
-                                     device, config, mask_ratio)
-                metrics['eval_loss'] = eval_loss
+                eval_metrics = evaluate_masked(model, test_dataloader,
+                                               device, config, mask_ratio)
+                metrics.update(eval_metrics)
 
             if step % FLAGS.save_interval == 0:
                 model_save_path = os.path.join(
@@ -271,8 +325,6 @@ def main(_):
                 wandb.save(model_save_path)
 
             wandb.log(metrics, step=step)
-            print(f"Step {step}: " +
-                  ", ".join([f"{k}={v:.4f}" for k, v in metrics.items()]))
             metrics = {}
 
             step += 1
