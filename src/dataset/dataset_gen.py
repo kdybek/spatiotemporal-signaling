@@ -5,6 +5,7 @@ import logging
 import zarr
 import tifffile as tiff
 import numpy as np
+import math
 from tqdm import tqdm
 
 
@@ -77,9 +78,28 @@ def extract_video(channel_mapping):
     return video
 
 
+def throw_out_frames(video, metadata, acq_freq):
+    T, C, H, W = video.shape
+    original_acq_freq = metadata["Acq_freq_min"]
+    step = acq_freq / original_acq_freq
+
+    if not math.isclose(step, round(step), abs_tol=1e-5):
+        raise ValueError(f"Acq_freq {acq_freq} is not an integer multiple of video Acq_freq_min {
+                         original_acq_freq}")
+
+    step = int(round(step))
+
+    video = video[::step]
+    metadata["Acq_freq_min"] = acq_freq
+    metadata.pop("Acquisition_frequency_min", None)  # Remove redundancy
+
+    return video, metadata
+
+
 def create_zarr_dataset(
         items,
         out_path,
+        acq_freq
 ):
     root = zarr.open(out_path, mode='w')
 
@@ -92,6 +112,7 @@ def create_zarr_dataset(
 
         try:
             video = extract_video(item)
+            video, meta = throw_out_frames(video, meta, acq_freq)
         except Exception as e:
             logging.warning(f"Skipping item {idx} due to error: {e}")
             continue
@@ -99,14 +120,12 @@ def create_zarr_dataset(
         arr = root.create_array(
             name=f"{idx}",
             data=video,
-            chunks=(128, video.shape[1], video.shape[2], video.shape[3]),
+            chunks=(32, 1, 224, 224),
             compressors=compressors,
         )
         idx += 1
 
         arr.attrs["Metadata"] = meta
-
-    root.attrs["Num_videos"] = idx
 
 
 def main():
@@ -130,6 +149,13 @@ def main():
         "--log",
         default="gen.log",
         help="Log file to save warnings and info about the matching process"
+    )
+
+    parser.add_argument(
+        "--acq_freq",
+        type=float,
+        default=15.0,
+        help="Target acquisition frequency in minutes (default: 1.0)"
     )
 
     parser.add_argument(
@@ -157,7 +183,7 @@ def main():
 
     logging.info(f"Loaded {len(items)} items from PKL.")
 
-    create_zarr_dataset(items, args.output)
+    create_zarr_dataset(items, args.output, args.acq_freq)
 
     logging.info(f"Zarr dataset created at {args.output}")
 
