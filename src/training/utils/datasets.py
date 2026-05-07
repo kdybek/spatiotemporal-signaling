@@ -4,6 +4,12 @@ from torch.utils.data import Dataset
 import math
 from pathlib import Path
 
+
+DATASET_T_CHUNK = 32
+DATASET_H_CHUNK = 224
+DATASET_W_CHUNK = 224
+
+
 def percentile_norm(video):
     for c in range(video.shape[1]):  # per channel
         p1, p99 = np.percentile(video[:, c], (1, 99))
@@ -21,6 +27,10 @@ def downsample_video_2x(video):
         video[:, :, 1::2, 0::2] +
         video[:, :, 1::2, 1::2]
     ) / 4.0
+
+
+def snap_to_chunk_size(value, chunk_size):
+    return (value // chunk_size) * chunk_size
 
 
 def get_clip(root, video_name, clip_frames, clip_size, acq_freq, channel_names_list, random_crop, validation=False):
@@ -63,6 +73,10 @@ def get_clip(root, video_name, clip_frames, clip_size, acq_freq, channel_names_l
         start_t = (T - min_frames_needed) // 2
         start_h = (H - clip_size) // 2
         start_w = (W - clip_size) // 2
+
+    start_t = snap_to_chunk_size(start_t, DATASET_T_CHUNK)
+    start_h = snap_to_chunk_size(start_h, DATASET_H_CHUNK)
+    start_w = snap_to_chunk_size(start_w, DATASET_W_CHUNK)
 
     clip = root[video_name][start_t:start_t + min_frames_needed:step, channel_indices,
                             start_h:start_h + clip_size, start_w:start_w + clip_size]
