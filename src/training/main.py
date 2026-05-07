@@ -31,7 +31,7 @@ flags.DEFINE_string('save_dir', 'checkpoints',
 
 flags.DEFINE_float('learning_rate', 1e-4, 'Learning rate for the optimizer.')
 flags.DEFINE_integer(
-    'batch_size', 4, 'Batch size for training and evaluation.')
+    'batch_size', 16, 'Batch size for training and evaluation.')
 flags.DEFINE_float('train_split', 0.8,
                    'Proportion of data to use for training (rest is for validation).')
 flags.DEFINE_float('mask_ratio', 0.75,

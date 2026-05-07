@@ -102,7 +102,7 @@ def create_train_test_datasets(
                 random_crop=False,
                 validation=True,
             )
-        except ValueError as e:
+        except Exception as e:
             print(f"Skipping video {video_name} for train set due to error: {e}")
             continue
 
@@ -120,7 +120,7 @@ def create_train_test_datasets(
                 random_crop=False,
                 validation=True,
             )
-        except ValueError as e:
+        except Exception as e:
             print(f"Skipping video {video_name} for test set due to error: {e}")
             continue
 
