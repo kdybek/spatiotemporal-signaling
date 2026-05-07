@@ -6,4 +6,7 @@ transformers
 accelerate
 absl-py
 wandb
+wandb[media]
 ml-collections
+scikit-learn
+matplotlib
