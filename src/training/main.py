@@ -124,8 +124,7 @@ def evaluate_masked(model, dataloader, device, config, mask_ratio):
 
             mask = get_random_mask(videos.size(
                 0), get_seq_len(config), mask_ratio).to(device)
-            outputs = model(pixel_values=videos, bool_masked_pos=mask,
-                            output_hidden_states=True)
+            outputs = model(pixel_values=videos, bool_masked_pos=mask)
 
             if not first_visualization_done:
                 rec_videos = reconstruct_videos_from_patches(
@@ -156,7 +155,7 @@ def evaluate_masked(model, dataloader, device, config, mask_ratio):
 
                 first_visualization_done = True
 
-        total_loss += outputs.loss.item() * videos.size(0)
+            total_loss += outputs.loss.item() * videos.size(0)
 
     avg_loss = total_loss / len(dataloader.dataset)
     metrics['eval_loss'] = avg_loss
