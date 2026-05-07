@@ -3,13 +3,16 @@ import numpy as np
 from transformers import VideoMAEForPreTraining, VideoMAEConfig
 from torch.optim import AdamW
 from tqdm import tqdm
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader
 from absl import app, flags
+from sklearn.manifold import TSNE
+from sklearn.preprocessing import LabelEncoder
+import matplotlib.pyplot as plt
 import random
 import os
 import wandb
 
-from utils.datasets import ZarrVideoDataset
+from utils.datasets import create_train_test_datasets
 from utils.logging import get_exp_name, setup_wandb
 
 
@@ -45,12 +48,9 @@ flags.DEFINE_string('transforms', 'arcsinh percentile_norm',
                     'Space-separated list of transforms to apply to the videos. Supported: percentile_norm, arcsinh, log1p.')
 flags.DEFINE_float('arcsinh_cofactor', 5.0,
                    'Cofactor for arcsinh transform. Only used if "arcsinh" is in the transforms list.')
-flags.DEFINE_bool(
-    'augment', True, 'Whether to apply data augmentation (random flips) during training.')
-flags.DEFINE_bool(
-    'random_crop', True, 'Whether to apply random cropping to the video clips during training.')
+
 flags.DEFINE_integer(
-    'eval_traj_len', 16, 'Number of overlapping clips for the trajectory experimens.')
+    'eval_traj_len', 8, 'Number of overlapping clips for the trajectory experimens.')
 flags.DEFINE_integer(
     'eval_traj_stride', 4, 'Stride between overlapping clips for the trajectory experimens.')
 
@@ -116,13 +116,15 @@ def evaluate_masked(model, dataloader, device, config, mask_ratio):
     metrics = {}
 
     with torch.no_grad():
-        for videos in tqdm(dataloader):
-            videos = videos[:, :config.num_frames, ...]  # Ensure videos have the expected number of frames
+        for videos, _ in tqdm(dataloader):
+            # Ensure videos have the expected number of frames
+            videos = videos[:, :config.num_frames, ...]
             videos = videos.to(device)
 
             mask = get_random_mask(videos.size(
                 0), get_seq_len(config), mask_ratio).to(device)
-            outputs = model(pixel_values=videos, bool_masked_pos=mask, output_hidden_states=True)
+            outputs = model(pixel_values=videos, bool_masked_pos=mask,
+                            output_hidden_states=True)
 
             if not first_visualization_done:
                 rec_videos = reconstruct_videos_from_patches(
@@ -146,8 +148,10 @@ def evaluate_masked(model, dataloader, device, config, mask_ratio):
                 for ch in range(num_channels):
                     og_video_ch = np.repeat(original_video[:, ch:ch+1, ...], 3, axis=1)
                     rec_video_ch = np.repeat(rec_video[:, ch:ch+1, ...], 3, axis=1)
-                    metrics[f'original_channel_{ch}'] = wandb.Video(og_video_ch, fps=4, format="mp4")
-                    metrics[f'reconstructed_channel_{ch}'] = wandb.Video(rec_video_ch, fps=4, format="mp4")
+                    metrics[f'original_channel_{ch}'] = wandb.Video(
+                        og_video_ch, fps=4, format="mp4")
+                    metrics[f'reconstructed_channel_{ch}'] = wandb.Video(
+                        rec_video_ch, fps=4, format="mp4")
 
                 first_visualization_done = True
 
@@ -159,29 +163,127 @@ def evaluate_masked(model, dataloader, device, config, mask_ratio):
     return metrics
 
 
+def extract_videomae_latents(model, config, pixel_values):
+    model.eval()
+
+    with torch.no_grad():
+        mask = torch.zeros(pixel_values.size(0), get_seq_len(config), dtype=torch.bool, device=pixel_values.device)
+        emb = model.videomae.embeddings(pixel_values, bool_masked_pos=mask)
+        latents = model.videomae.encoder(emb)[0]  # (B, seq_len, D)
+
+    return latents
+
+
+def create_tsne_plot(latent_trajs, labels):
+    B, traj_len, D = latent_trajs.shape
+
+    assert len(labels) == B, "Number of labels must match the number of trajectories."
+
+    encoder = LabelEncoder()
+    y = encoder.fit_transform(labels)
+
+    tsne = TSNE(
+        n_components=2,
+        perplexity=30,
+        random_state=42,
+    )
+    latent_trajs_2d = tsne.fit_transform(latent_trajs[:, 0, :].numpy())
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+
+    ax.scatter(
+        latent_trajs_2d[:, 0],
+        latent_trajs_2d[:, 1],
+        c=y,
+        s=10,
+    )
+
+    ax.set_title("t-SNE Embeddings")
+
+    return wandb.Image(fig)
+
+
+def get_traj_stats(latent_trajs):
+    stats = {
+        'dist_means': [],
+        'dist_stds': [],
+        'straightness': [],
+    }
+
+    for traj in latent_trajs:
+        dists = torch.norm(traj[1:] - traj[:-1], dim=1)
+        stats['dist_means'].append(dists.mean().item())
+        stats['dist_stds'].append(dists.std().item())
+        first_last_dist = torch.norm(traj[-1] - traj[0]).item()
+        dist_sum = dists.sum().item()
+        stats['straightness'].append(first_last_dist / (dist_sum + 1e-8))
+
+    return stats
+
+
+def create_traj_plots(latent_trajs, labels):
+    stats = get_traj_stats(latent_trajs)
+    encoder = LabelEncoder()
+    y = encoder.fit_transform(labels)
+
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+
+    axes[0].scatter(stats['dist_means'], stats['dist_stds'], c=y)
+    axes[0].set_xlabel('Mean Step Distance')
+    axes[0].set_ylabel('Std of Step Distances')
+    axes[0].set_title('Mean vs Std of Step Distances')
+
+    axes[1].scatter(stats['dist_means'], stats['straightness'], c=y)
+    axes[1].set_xlabel('Mean Step Distance')
+    axes[1].set_ylabel('Straightness')
+    axes[1].set_title('Mean Step Distance vs Straightness')
+
+    axes[2].scatter(stats['dist_stds'], stats['straightness'], c=y)
+    axes[2].set_xlabel('Std of Step Distances')
+    axes[2].set_ylabel('Straightness')
+    axes[2].set_title('Std of Step Distances vs Straightness')
+
+    return wandb.Image(fig)
+
+
 def evaluate_cluster(model, dataloader, device, config, traj_len, traj_stride):
     model.eval()
     latent_trajs = []
+    labels = []
+
+    MAX_TRAJ = 512  # To limit memory usage during t-SNE evaluation
 
     with torch.no_grad():
-        for videos in tqdm(dataloader):
+        for videos, exp_name in tqdm(dataloader):
             clips = split_video_batch_into_overlapping_clips(
                 videos, config.num_frames, traj_len, traj_stride)
 
             traj = []
             for clip in clips:
                 clip = clip.to(device)
-                mask = torch.zeros((clip.size(0), get_seq_len(config)), dtype=torch.bool).to(device)
-                outputs = model(pixel_values=clip, bool_masked_pos=mask, output_hidden_states=True)
-                latent = outputs.hidden_states[-1].mean(dim=1)  # (B, D)
+                latent = extract_videomae_latents(model, config, clip)  # (B, seq_len, D)
+                latent = latent.mean(dim=1)  # (B, D)
                 assert len(latent.shape) == 2, "Expected features to be of shape (B, D)"
                 traj.append(latent.cpu().unsqueeze(1))  # (B, 1, D)
 
             traj = torch.cat(traj, dim=1)  # (B, traj_len, D)
             latent_trajs.append(traj)
+            labels.extend(exp_name)
+
+            if len(labels) >= MAX_TRAJ:
+                break
 
     latent_trajs = torch.cat(latent_trajs, dim=0)  # (N, traj_len, D)
-    return latent_trajs
+
+    tsne_plot = create_tsne_plot(latent_trajs, labels)
+    traj_stats_plot = create_traj_plots(latent_trajs, labels)
+
+    metrics = {
+        'tsne_plot': tsne_plot,
+        'traj_stats_plot': traj_stats_plot,
+    }
+
+    return metrics
 
 
 def set_seed(seed):
@@ -230,27 +332,17 @@ def main(_):
     eval_clip_frames = FLAGS.clip_frames + \
         (FLAGS.eval_traj_len - 1) * FLAGS.eval_traj_stride
 
-    dataset = ZarrVideoDataset(
+    train_dataset, test_dataset = create_train_test_datasets(
+        test_fraction=1 - FLAGS.train_split,
         zarr_path=FLAGS.dataset_path,
-        # This is hacky but it allows us to use the same dataset for both training and evaluation,
-        # even though we need longer clips only for the trajectory experiments during evaluation.
-        clip_frames=eval_clip_frames,
+        clip_frames_train=FLAGS.clip_frames,
+        clip_frames_test=eval_clip_frames,
         clip_size=FLAGS.clip_size,
         acq_freq=FLAGS.acq_freq,
-        transform_names=FLAGS.transforms,
         channel_names=FLAGS.channel_names,
-        arcsinh_cofactor=FLAGS.arcsinh_cofactor,
-        augment=FLAGS.augment,
-        random_crop=FLAGS.random_crop
+        transform_names=FLAGS.transforms,
+        arcsinh_cofactor=FLAGS.arcsinh_cofactor
     )
-
-    train_size = int(len(dataset) * FLAGS.train_split)
-    test_size = len(dataset) - train_size
-    train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
-    # Use the original clip length for training
-    train_dataset.clip_frames = FLAGS.clip_frames
-    test_dataset.augment = False  # Disable augmentation for the test dataset
-    test_dataset.random_crop = False  # Disable random cropping for the test dataset
 
     train_dataloader = DataLoader(
         train_dataset,
@@ -263,14 +355,14 @@ def main(_):
     test_dataloader = DataLoader(
         test_dataset,
         batch_size=FLAGS.batch_size,
-        shuffle=False,
+        shuffle=True,  # For better class balance during eval
         num_workers=4,
         pin_memory=True
     )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    T, C, H, W = train_dataset[0].shape
+    T, C, H, W = train_dataset[0][0].shape
     assert H == W, "Only square images are supported."
 
     config = VideoMAEConfig(
@@ -290,12 +382,14 @@ def main(_):
     mask_ratio = FLAGS.mask_ratio
 
     eval_metrics = evaluate_masked(model, test_dataloader, device, config, mask_ratio)
+    latent_metrics = evaluate_cluster(model, test_dataloader, device, config, FLAGS.eval_traj_len, FLAGS.eval_traj_stride)
+    eval_metrics.update(latent_metrics)
     wandb.log(eval_metrics, step=0)
 
     step = 1
     metrics = {}
     while step < FLAGS.steps + 1:
-        for videos in tqdm(train_dataloader):
+        for videos, _ in tqdm(train_dataloader):
 
             videos = videos.to(device)  # (B,T,C,H,W)
 
@@ -316,7 +410,10 @@ def main(_):
             if step % FLAGS.eval_interval == 0:
                 eval_metrics = evaluate_masked(model, test_dataloader,
                                                device, config, mask_ratio)
+                latent_metrics = evaluate_cluster(model, test_dataloader, device, config, FLAGS.eval_traj_len, FLAGS.eval_traj_stride)
+
                 metrics.update(eval_metrics)
+                metrics.update(latent_metrics)
 
             if step % FLAGS.save_interval == 0:
                 model_save_path = os.path.join(

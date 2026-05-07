@@ -2,7 +2,7 @@ import zarr
 import numpy as np
 from torch.utils.data import Dataset
 import math
-
+from pathlib import Path
 
 def percentile_norm(video):
     for c in range(video.shape[1]):  # per channel
@@ -73,10 +73,103 @@ def get_clip(root, video_name, clip_frames, clip_size, acq_freq, channel_names_l
     return clip
 
 
+def create_train_test_datasets(
+    test_fraction,
+    zarr_path,
+    clip_frames_train,
+    clip_frames_test,
+    clip_size,
+    acq_freq,
+    channel_names,
+    transform_names,
+    arcsinh_cofactor=None
+):
+    assert 0 < test_fraction < 1, "test_fraction must be between 0 and 1"
+
+    root = zarr.open(zarr_path, mode="r")
+    channel_names_list = channel_names.split()
+    train_video_names = []
+    test_video_names = []
+    for video_name in root:
+        try:
+            get_clip(
+                root,
+                video_name,
+                clip_frames_train,
+                clip_size,
+                acq_freq,
+                channel_names_list,
+                random_crop=False,
+                validation=True,
+            )
+        except ValueError as e:
+            print(f"Skipping video {video_name} for train set due to error: {e}")
+            continue
+
+        train_video_names.append(video_name)
+
+    for video_name in root:
+        try:
+            get_clip(
+                root,
+                video_name,
+                clip_frames_test,
+                clip_size,
+                acq_freq,
+                channel_names_list,
+                random_crop=False,
+                validation=True,
+            )
+        except ValueError as e:
+            print(f"Skipping video {video_name} for test set due to error: {e}")
+            continue
+
+        test_video_names.append(video_name)
+
+    print(f"Found {len(train_video_names)} viable videos for train set and {len(test_video_names)} for test set out of {len(root)} total videos.")
+
+    test_video_names = np.random.permutation(test_video_names)
+    test_split = int(test_fraction * len(test_video_names))
+    test_video_names = test_video_names[:test_split]
+
+    train_video_names = [name for name in train_video_names if name not in test_video_names]
+
+    print(f"Using {len(train_video_names)} videos for training and {len(test_video_names)} videos for testing.")
+
+    train_dataset = ZarrVideoDataset(
+        root,
+        train_video_names,
+        clip_frames_train,
+        clip_size,
+        acq_freq,
+        channel_names,
+        transform_names,
+        augment=True,
+        random_crop=True,
+        arcsinh_cofactor=arcsinh_cofactor,
+    )
+
+    test_dataset = ZarrVideoDataset(
+        root,
+        test_video_names,
+        clip_frames_test,
+        clip_size,
+        acq_freq,
+        channel_names,
+        transform_names,
+        augment=False,
+        random_crop=False,
+        arcsinh_cofactor=arcsinh_cofactor,
+    )
+
+    return train_dataset, test_dataset
+
+
 class ZarrVideoDataset(Dataset):
     def __init__(
         self,
-        zarr_path,
+        root,
+        video_names,
         clip_frames,
         clip_size,
         acq_freq,
@@ -86,7 +179,8 @@ class ZarrVideoDataset(Dataset):
         random_crop,
         arcsinh_cofactor=None,
     ):
-        self.root = zarr.open(zarr_path, mode="r")
+        self.root = root
+        self.video_names = video_names
         self.clip_frames = clip_frames
         self.clip_size = clip_size
         self.acq_freq = acq_freq
@@ -96,33 +190,11 @@ class ZarrVideoDataset(Dataset):
         self.augment = augment
         self.random_crop = random_crop
 
-        self._legal_video_names = []
-
-        for video_name in self.root:
-            try:
-                get_clip(
-                    self.root,
-                    video_name,
-                    self.clip_frames,
-                    self.clip_size,
-                    self.acq_freq,
-                    self.channel_names_list,
-                    self.random_crop,
-                    validation=True,
-                )
-            except ValueError as e:
-                print(f"Skipping video {video_name} due to error: {e}")
-                continue
-
-            self._legal_video_names.append(video_name)
-
-        print(f"Found {len(self._legal_video_names)} viable videos out of {len(self.root)} total videos.")
-
     def __len__(self):
-        return len(self._legal_video_names)
+        return len(self.video_names)
 
     def __getitem__(self, idx):
-        video_name = self._legal_video_names[idx]
+        video_name = self.video_names[idx]
         video = get_clip(
             self.root,
             video_name,
@@ -157,4 +229,7 @@ class ZarrVideoDataset(Dataset):
             if np.random.rand() < 0.5:
                 video = video[:, :, ::-1, :].copy()
 
-        return video
+        path = self.root[video_name].attrs["Metadata"]["Path"]
+        exp_name = Path(path).name
+
+        return video, exp_name
