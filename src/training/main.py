@@ -90,7 +90,8 @@ def unpatchify(patches, tubelet_size, patch_size, num_frames, image_size):
 def reconstruct_videos_from_patches(videos, reconstructed_patches, mask, tubelet_size, patch_size, num_frames, image_size):
     B, T, C, H, W = videos.shape
     patches = patchify(videos, tubelet_size, patch_size).clone()
-    patches[mask] = reconstructed_patches
+    for i in range(B):
+        patches[i][mask[i]] = reconstructed_patches[i]
     reconstructed_videos = unpatchify(
         patches, tubelet_size, patch_size, num_frames, image_size)
 
