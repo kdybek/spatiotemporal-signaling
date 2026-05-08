@@ -21,9 +21,9 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string('run_group', 'Debug', 'Run group.')
 flags.DEFINE_integer('seed', 0, 'Random seed.')
 
-flags.DEFINE_integer('steps', 600_000, 'Number of training steps.')
-flags.DEFINE_integer('eval_interval', 100_000, 'Evaluation interval.')
-flags.DEFINE_integer('save_interval', 300_000, 'Saving interval.')
+flags.DEFINE_integer('steps', 300_000, 'Number of training steps.')
+flags.DEFINE_integer('eval_interval', 50_000, 'Evaluation interval.')
+flags.DEFINE_integer('save_interval', 50_000, 'Saving interval.')
 flags.DEFINE_string('dataset_path', 'toy_dataset.zarr',
                     'Path to the train dataset.')
 flags.DEFINE_string('save_dir', 'checkpoints',
