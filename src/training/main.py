@@ -24,7 +24,7 @@ flags.DEFINE_integer('seed', 0, 'Random seed.')
 flags.DEFINE_integer('steps', 300_000, 'Number of training steps.')
 flags.DEFINE_integer('eval_interval', 50_000, 'Evaluation interval.')
 flags.DEFINE_integer('save_interval', 50_000, 'Saving interval.')
-flags.DEFINE_integer('mask_curriculum_steps', 100_000,
+flags.DEFINE_integer('mask_curriculum_steps', 0,
                      'Number of steps over which to linearly increase the mask ratio from 0 to the final value.')
 flags.DEFINE_string('dataset_path', 'toy_dataset.zarr',
                     'Path to the train dataset.')
