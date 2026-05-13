@@ -294,7 +294,7 @@ def get_mask_ratio(step, curriculum_steps, target_mask_ratio):
     if step >= curriculum_steps:
         return target_mask_ratio
     else:
-        return target_mask_ratio * (step / curriculum_steps)
+        return max(target_mask_ratio * (step / curriculum_steps), 0.1)
 
 
 def set_seed(seed):
