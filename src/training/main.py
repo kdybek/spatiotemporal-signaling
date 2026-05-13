@@ -24,6 +24,8 @@ flags.DEFINE_integer('seed', 0, 'Random seed.')
 flags.DEFINE_integer('steps', 300_000, 'Number of training steps.')
 flags.DEFINE_integer('eval_interval', 50_000, 'Evaluation interval.')
 flags.DEFINE_integer('save_interval', 50_000, 'Saving interval.')
+flags.DEFINE_integer('mask_curriculum_steps', 100_000,
+                     'Number of steps over which to linearly increase the mask ratio from 0 to the final value.')
 flags.DEFINE_string('dataset_path', 'toy_dataset.zarr',
                     'Path to the train dataset.')
 flags.DEFINE_string('save_dir', 'checkpoints',
@@ -167,7 +169,8 @@ def extract_videomae_latents(model, config, pixel_values):
     model.eval()
 
     with torch.no_grad():
-        mask = torch.zeros(pixel_values.size(0), get_seq_len(config), dtype=torch.bool, device=pixel_values.device)
+        mask = torch.zeros(pixel_values.size(0), get_seq_len(config),
+                           dtype=torch.bool, device=pixel_values.device)
         emb = model.videomae.embeddings(pixel_values, bool_masked_pos=mask)
         latents = model.videomae.encoder(emb)[0]  # (B, seq_len, D)
 
@@ -261,7 +264,8 @@ def evaluate_cluster(model, dataloader, device, config, traj_len, traj_stride):
             traj = []
             for clip in clips:
                 clip = clip.to(device)
-                latent = extract_videomae_latents(model, config, clip)  # (B, seq_len, D)
+                latent = extract_videomae_latents(
+                    model, config, clip)  # (B, seq_len, D)
                 latent = latent.mean(dim=1)  # (B, D)
                 assert len(latent.shape) == 2, "Expected features to be of shape (B, D)"
                 traj.append(latent.cpu().unsqueeze(1))  # (B, 1, D)
@@ -284,6 +288,13 @@ def evaluate_cluster(model, dataloader, device, config, traj_len, traj_stride):
     }
 
     return metrics
+
+
+def get_mask_ratio(step, curriculum_steps, target_mask_ratio):
+    if step >= curriculum_steps:
+        return target_mask_ratio
+    else:
+        return target_mask_ratio * (step / curriculum_steps)
 
 
 def set_seed(seed):
@@ -379,10 +390,11 @@ def main(_):
 
     optimizer = AdamW(model.parameters(), lr=FLAGS.learning_rate)
 
-    mask_ratio = FLAGS.mask_ratio
+    target_mask_ratio = FLAGS.mask_ratio
 
-    eval_metrics = evaluate_masked(model, test_dataloader, device, config, mask_ratio)
-    latent_metrics = evaluate_cluster(model, test_dataloader, device, config, FLAGS.eval_traj_len, FLAGS.eval_traj_stride)
+    eval_metrics = evaluate_masked(model, test_dataloader, device, config, target_mask_ratio)
+    latent_metrics = evaluate_cluster(
+        model, test_dataloader, device, config, FLAGS.eval_traj_len, FLAGS.eval_traj_stride)
     eval_metrics.update(latent_metrics)
     wandb.log(eval_metrics, step=0)
 
@@ -393,6 +405,7 @@ def main(_):
 
             videos = videos.to(device)  # (B,T,C,H,W)
 
+            mask_ratio = get_mask_ratio(step, FLAGS.mask_curriculum_steps, target_mask_ratio)
             mask = get_random_mask(videos.size(
                 0), seq_len, mask_ratio).to(device)
 
@@ -409,8 +422,9 @@ def main(_):
 
             if step % FLAGS.eval_interval == 0:
                 eval_metrics = evaluate_masked(model, test_dataloader,
-                                               device, config, mask_ratio)
-                latent_metrics = evaluate_cluster(model, test_dataloader, device, config, FLAGS.eval_traj_len, FLAGS.eval_traj_stride)
+                                               device, config, target_mask_ratio)
+                latent_metrics = evaluate_cluster(
+                    model, test_dataloader, device, config, FLAGS.eval_traj_len, FLAGS.eval_traj_stride)
 
                 metrics.update(eval_metrics)
                 metrics.update(latent_metrics)
