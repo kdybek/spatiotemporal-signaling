@@ -1,6 +1,7 @@
 import zarr
 import numpy as np
 from torch.utils.data import Dataset
+from skimage.filters import butterworth
 import math
 from pathlib import Path
 
@@ -17,6 +18,31 @@ def percentile_norm(video):
         video[:, c] = (video[:, c] - p1) / (p99 - p1)
 
     return video
+
+
+def butterworth_filter(video, cutoff, order, per_frame):
+    if per_frame:
+        filtered_video = np.empty_like(video)
+        for t in range(video.shape[0]):
+            for c in range(video.shape[1]):
+                filtered_video[t, c] = butterworth(
+                    video[t, c],
+                    cutoff_frequency_ratio=cutoff,
+                    order=order,
+                    high_pass=False
+                )
+        return filtered_video
+    else:
+        # Apply the filter across the entire video (treating it as a 3D volume)
+        filtered_video = np.empty_like(video)
+        for c in range(video.shape[1]):
+            filtered_video[:, c] = butterworth(
+                video[:, c],
+                cutoff_frequency_ratio=cutoff,
+                order=order,
+                high_pass=False
+            )
+        return filtered_video
 
 
 def downsample_video_2x(video):
@@ -94,14 +120,12 @@ def create_train_test_datasets(
     clip_frames_test,
     clip_size,
     acq_freq,
-    channel_names,
-    transform_names,
-    arcsinh_cofactor=None
+    channel_names_list,
+    transform_func,
 ):
     assert 0 < test_fraction < 1, "test_fraction must be between 0 and 1"
 
     root = zarr.open(zarr_path, mode="r")
-    channel_names_list = channel_names.split()
     train_video_names = []
     test_video_names = []
     for video_name in root:
@@ -140,15 +164,18 @@ def create_train_test_datasets(
 
         test_video_names.append(video_name)
 
-    print(f"Found {len(train_video_names)} viable videos for train set and {len(test_video_names)} for test set out of {len(root)} total videos.")
+    print(f"Found {len(train_video_names)} viable videos for train set and {
+          len(test_video_names)} for test set out of {len(root)} total videos.")
 
     test_video_names = np.random.permutation(test_video_names)
     test_split = int(test_fraction * len(test_video_names))
     test_video_names = test_video_names[:test_split]
 
-    train_video_names = [name for name in train_video_names if name not in test_video_names]
+    train_video_names = [
+        name for name in train_video_names if name not in test_video_names]
 
-    print(f"Using {len(train_video_names)} videos for training and {len(test_video_names)} videos for testing.")
+    print(f"Using {len(train_video_names)} videos for training and {
+          len(test_video_names)} videos for testing.")
 
     train_dataset = ZarrVideoDataset(
         root,
@@ -156,11 +183,10 @@ def create_train_test_datasets(
         clip_frames_train,
         clip_size,
         acq_freq,
-        channel_names,
-        transform_names,
+        channel_names_list,
+        transform_func,
         augment=True,
         random_crop=True,
-        arcsinh_cofactor=arcsinh_cofactor,
     )
 
     test_dataset = ZarrVideoDataset(
@@ -169,11 +195,10 @@ def create_train_test_datasets(
         clip_frames_test,
         clip_size,
         acq_freq,
-        channel_names,
-        transform_names,
+        channel_names_list,
+        transform_func,
         augment=False,
         random_crop=False,
-        arcsinh_cofactor=arcsinh_cofactor,
     )
 
     return train_dataset, test_dataset
@@ -187,20 +212,18 @@ class ZarrVideoDataset(Dataset):
         clip_frames,
         clip_size,
         acq_freq,
-        channel_names,
-        transform_names,
+        channel_names_list,
+        transform_func,
         augment,
         random_crop,
-        arcsinh_cofactor=None,
     ):
         self.root = root
         self.video_names = video_names
         self.clip_frames = clip_frames
         self.clip_size = clip_size
         self.acq_freq = acq_freq
-        self.channel_names_list = channel_names.split()
-        self.transform_names_list = transform_names.split()
-        self.arcsinh_cofactor = arcsinh_cofactor
+        self.channel_names_list = channel_names_list
+        self.transform_func = transform_func
         self.augment = augment
         self.random_crop = random_crop
 
@@ -220,19 +243,7 @@ class ZarrVideoDataset(Dataset):
         )
 
         video = video.astype("float32")
-
-        for transform_name in self.transform_names_list:
-            if transform_name == "percentile_norm":
-                video = percentile_norm(video)
-            elif transform_name == "arcsinh":
-                if self.arcsinh_cofactor is None:
-                    raise ValueError(
-                        "arcsinh_cofactor must be provided for arcsinh transform.")
-                video = np.arcsinh(video / self.arcsinh_cofactor)
-            elif transform_name == "log1p":
-                video = np.log1p(video)
-            else:
-                raise ValueError(f"Unknown transform: {transform_name}")
+        video = self.transform_func(video)
 
         if self.augment:
             # Random horizontal flip

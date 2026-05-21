@@ -12,7 +12,7 @@ import random
 import os
 import wandb
 
-from utils.datasets import create_train_test_datasets
+from utils.datasets import create_train_test_datasets, percentile_norm, butterworth_filter
 from utils.logging import get_exp_name, setup_wandb
 
 
@@ -46,10 +46,16 @@ flags.DEFINE_integer(
     'acq_freq', 30, 'Acquisition frequency (in minutes) for sampling video clips.')
 flags.DEFINE_string('channel_names', 'Ch_ERK-KTR',
                     'Space-separated list of channel names to use from the videos.')
-flags.DEFINE_string('transforms', 'arcsinh percentile_norm',
-                    'Space-separated list of transforms to apply to the videos. Supported: percentile_norm, arcsinh, log1p.')
+flags.DEFINE_string('transforms', 'arcsinh butterworth percentile_norm',
+                    'Space-separated list of transforms to apply to the videos. Supported: percentile_norm, arcsinh, log1p, butterworth.')
 flags.DEFINE_float('arcsinh_cofactor', 5.0,
-                   'Cofactor for arcsinh transform. Only used if "arcsinh" is in the transforms list.')
+                   'Cofactor for arcsinh transform.')
+flags.DEFINE_float('butterworth_cutoff', 0.2,
+                   'Cutoff frequency for Butterworth low-pass filter.')
+flags.DEFINE_integer('butterworth_order', 2,
+                     'Order of Butterworth low-pass filter.')
+flags.DEFINE_boolean('per_frame_butterworth', False,
+                     'Whether to apply Butterworth filter independently to each frame (instead of across time).')
 
 flags.DEFINE_integer(
     'eval_traj_len', 8, 'Number of overlapping clips for the trajectory experimens.')
@@ -332,6 +338,26 @@ def get_random_mask(batch_size, seq_len, mask_ratio):
     return mask
 
 
+def get_transform_func(transform_names_list, arcsinh_cofactor, butterworth_cutoff, butterworth_order, per_frame_butterworth):
+    def transform_func(video):
+        for transform_name in transform_names_list:
+            if transform_name == 'percentile_norm':
+                video = percentile_norm(video)
+            elif transform_name == 'arcsinh':
+                video = np.arcsinh(video / arcsinh_cofactor)
+            elif transform_name == 'log1p':
+                video = np.log1p(video)
+            elif transform_name == 'butterworth':
+                video = butterworth_filter(
+                    video, cutoff=butterworth_cutoff, order=butterworth_order, per_frame=per_frame_butterworth)
+            else:
+                raise ValueError(f"Unsupported transform: {transform_name}")
+
+        return video
+
+    return transform_func
+
+
 def main(_):
     exp_name = get_exp_name(FLAGS.seed)
     setup_wandb(project='Spaciotemporal Signaling',
@@ -343,6 +369,14 @@ def main(_):
     eval_clip_frames = FLAGS.clip_frames + \
         (FLAGS.eval_traj_len - 1) * FLAGS.eval_traj_stride
 
+    transform_func = get_transform_func(
+        FLAGS.transforms.split(),
+        FLAGS.arcsinh_cofactor,
+        FLAGS.butterworth_cutoff,
+        FLAGS.butterworth_order,
+        FLAGS.per_frame_butterworth,
+    )
+
     train_dataset, test_dataset = create_train_test_datasets(
         test_fraction=1 - FLAGS.train_split,
         zarr_path=FLAGS.dataset_path,
@@ -350,9 +384,8 @@ def main(_):
         clip_frames_test=eval_clip_frames,
         clip_size=FLAGS.clip_size,
         acq_freq=FLAGS.acq_freq,
-        channel_names=FLAGS.channel_names,
-        transform_names=FLAGS.transforms,
-        arcsinh_cofactor=FLAGS.arcsinh_cofactor
+        channel_names_list=FLAGS.channel_names.split(),
+        transform_func=transform_func,
     )
 
     train_dataloader = DataLoader(
@@ -392,7 +425,8 @@ def main(_):
 
     target_mask_ratio = FLAGS.mask_ratio
 
-    eval_metrics = evaluate_masked(model, test_dataloader, device, config, target_mask_ratio)
+    eval_metrics = evaluate_masked(
+        model, test_dataloader, device, config, target_mask_ratio)
     latent_metrics = evaluate_cluster(
         model, test_dataloader, device, config, FLAGS.eval_traj_len, FLAGS.eval_traj_stride)
     eval_metrics.update(latent_metrics)
@@ -405,7 +439,8 @@ def main(_):
 
             videos = videos.to(device)  # (B,T,C,H,W)
 
-            mask_ratio = get_mask_ratio(step, FLAGS.mask_curriculum_steps, target_mask_ratio)
+            mask_ratio = get_mask_ratio(
+                step, FLAGS.mask_curriculum_steps, target_mask_ratio)
             mask = get_random_mask(videos.size(
                 0), seq_len, mask_ratio).to(device)
 

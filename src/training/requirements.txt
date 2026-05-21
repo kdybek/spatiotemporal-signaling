@@ -9,4 +9,5 @@ wandb
 wandb[media]
 ml-collections
 scikit-learn
+scikit-image
 matplotlib
