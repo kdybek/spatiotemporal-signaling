@@ -339,24 +339,29 @@ def get_random_mask(batch_size, seq_len, mask_ratio):
     return mask
 
 
-def get_transform_func(transform_names_list, arcsinh_cofactor, butterworth_cutoff, butterworth_order, per_frame_butterworth):
-    def transform_func(video):
-        for transform_name in transform_names_list:
+class TransformPipeline:
+    def __init__(self, transform_names_list, arcsinh_cofactor, butterworth_cutoff, butterworth_order, per_frame_butterworth):
+        self.transform_names_list = transform_names_list
+        self.arcsinh_cofactor = arcsinh_cofactor
+        self.butterworth_cutoff = butterworth_cutoff
+        self.butterworth_order = butterworth_order
+        self.per_frame_butterworth = per_frame_butterworth
+
+    def __call__(self, video):
+        for transform_name in self.transform_names_list:
             if transform_name == 'percentile_norm':
                 video = percentile_norm(video)
             elif transform_name == 'arcsinh':
-                video = np.arcsinh(video / arcsinh_cofactor)
+                video = np.arcsinh(video / self.arcsinh_cofactor)
             elif transform_name == 'log1p':
                 video = np.log1p(video)
             elif transform_name == 'butterworth':
                 video = butterworth_filter(
-                    video, cutoff=butterworth_cutoff, order=butterworth_order, per_frame=per_frame_butterworth)
+                    video, cutoff=self.butterworth_cutoff, order=self.butterworth_order, per_frame=self.per_frame_butterworth)
             else:
                 raise ValueError(f"Unsupported transform: {transform_name}")
 
         return video
-
-    return transform_func
 
 
 def main(_):
@@ -374,12 +379,12 @@ def main(_):
     eval_clip_frames = FLAGS.clip_frames + \
         (FLAGS.eval_traj_len - 1) * FLAGS.eval_traj_stride
 
-    transform_func = get_transform_func(
-        FLAGS.transforms.split(),
-        FLAGS.arcsinh_cofactor,
-        FLAGS.butterworth_cutoff,
-        FLAGS.butterworth_order,
-        FLAGS.per_frame_butterworth,
+    transform_pipeline = TransformPipeline(
+        transform_names_list=FLAGS.transforms.split(),
+        arcsinh_cofactor=FLAGS.arcsinh_cofactor,
+        butterworth_cutoff=FLAGS.butterworth_cutoff,
+        butterworth_order=FLAGS.butterworth_order,
+        per_frame_butterworth=FLAGS.per_frame_butterworth,
     )
 
     train_dataset, test_dataset = create_train_test_datasets(
@@ -390,7 +395,7 @@ def main(_):
         clip_size=FLAGS.clip_size,
         acq_freq=FLAGS.acq_freq,
         channel_names_list=FLAGS.channel_names.split(),
-        transform_func=transform_func,
+        transform_pipeline=transform_pipeline,
     )
 
     train_dataloader = DataLoader(

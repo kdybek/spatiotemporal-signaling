@@ -121,7 +121,7 @@ def create_train_test_datasets(
     clip_size,
     acq_freq,
     channel_names_list,
-    transform_func,
+    transform_pipeline,
 ):
     assert 0 < test_fraction < 1, "test_fraction must be between 0 and 1"
 
@@ -184,7 +184,7 @@ def create_train_test_datasets(
         clip_size,
         acq_freq,
         channel_names_list,
-        transform_func,
+        transform_pipeline,
         augment=True,
         random_crop=True,
     )
@@ -196,7 +196,7 @@ def create_train_test_datasets(
         clip_size,
         acq_freq,
         channel_names_list,
-        transform_func,
+        transform_pipeline,
         augment=False,
         random_crop=False,
     )
@@ -213,7 +213,7 @@ class ZarrVideoDataset(Dataset):
         clip_size,
         acq_freq,
         channel_names_list,
-        transform_func,
+        transform_pipeline,
         augment,
         random_crop,
     ):
@@ -223,7 +223,7 @@ class ZarrVideoDataset(Dataset):
         self.clip_size = clip_size
         self.acq_freq = acq_freq
         self.channel_names_list = channel_names_list
-        self.transform_func = transform_func
+        self.transform_pipeline = transform_pipeline
         self.augment = augment
         self.random_crop = random_crop
 
@@ -243,7 +243,7 @@ class ZarrVideoDataset(Dataset):
         )
 
         video = video.astype("float32")
-        video = self.transform_func(video)
+        video = self.transform_pipeline(video)
 
         if self.augment:
             # Random horizontal flip
