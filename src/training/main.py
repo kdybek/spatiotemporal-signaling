@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import random
 import os
 import wandb
+import json
 
 from utils.datasets import create_train_test_datasets, percentile_norm, butterworth_filter
 from utils.logging import get_exp_name, setup_wandb
@@ -365,6 +366,10 @@ def main(_):
     set_seed(FLAGS.seed)
 
     os.makedirs(FLAGS.save_dir, exist_ok=True)
+    flags_dict = FLAGS.flag_values_dict()
+
+    with open(os.path.join(FLAGS.save_dir, 'config.json'), 'w') as f:
+        json.dump(flags_dict, f, indent=4)
 
     eval_clip_frames = FLAGS.clip_frames + \
         (FLAGS.eval_traj_len - 1) * FLAGS.eval_traj_stride
