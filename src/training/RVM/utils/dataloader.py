@@ -1,5 +1,6 @@
 import zarr
 import numpy as np
+import jax
 import jax.numpy as jnp
 from skimage.filters import butterworth
 import math
@@ -281,15 +282,17 @@ def batch_iterator(dataset, batch_size, shuffle=True, exp_name=False):
             yield clips
 
 
-def prepare_rvm_src_tgt_pairs(clip_batch, src_frames, max_offset=None):
+@jax.jit
+def prepare_rvm_src_tgt_pairs(clip_batch, src_frames, tgt_frames):
     clip_batch = jnp.transpose(clip_batch, (0, 1, 3, 4, 2))  # (B, T, H, W, C)
+    B = clip_batch.shape[0]
+    T = clip_batch.shape[1]
 
-    src_batch = clip_batch[:, :src_frames]
-    if max_offset is None:
-        max_offset = clip_batch.shape[1] - src_frames
+    src_batch = clip_batch[:, :src_frames]  # (B, src_frames, H, W, C)
 
-    offsets = jnp.random.randint(1, max_offset + 1, size=clip_batch.shape[0])
+    max_offset = T - src_frames
+    offsets = jnp.random.randint(1, max_offset + 1, size=(B, tgt_frames))
     idx = offsets + src_frames - 1
-    tgt_batch = clip_batch[:, idx]
+    tgt_batch = clip_batch[jnp.arange(B)[:, None], idx]  # (B, tgt_frames, H, W, C)
 
     return src_batch, tgt_batch, offsets

@@ -14,6 +14,7 @@ from utils.model import model
 from utils.logging import get_exp_name, setup_wandb
 from utils.dataloader import create_train_test_datasets, TransformPipeline, prepare_rvm_src_tgt_pairs, batch_iterator
 from utils.loss import update_model
+from utils.evaluation import full_evaluation
 
 
 FLAGS = flags.FLAGS
@@ -40,6 +41,10 @@ flags.DEFINE_integer(
     'acq_freq', 30, 'Acquisition frequency (in minutes) for sampling video clips.')
 flags.DEFINE_string('channel_names', 'Ch_ERK-KTR',
                     'Space-separated list of channel names to use from the videos.')
+
+flags.DEFINE_integer('src_frames', 4, 'Number of source frames for reconstruction.')
+flags.DEFINE_integer('tgt_frames', 1, 'Number of target frames for reconstruction.')
+
 flags.DEFINE_string('transforms', 'arcsinh butterworth percentile_norm',
                     'Space-separated list of transforms to apply to the videos. Supported: percentile_norm, arcsinh, log1p, butterworth.')
 flags.DEFINE_float('arcsinh_cofactor', 5.0,
@@ -109,7 +114,10 @@ def main(_):
     optimizer = optax.adam(learning_rate=FLAGS.learning_rate)
     opt_state = optimizer.init(params)
 
-    eval_metrics = {}
+    eval_key, rng_key = jax.random.split(rng_key)
+    eval_metrics = full_evaluation(
+        model, test_dataset, params, FLAGS.src_frames, FLAGS.tgt_frames, FLAGS.batch_size, eval_key
+    )
     wandb.log(eval_metrics, step=0)
 
     checkpointer = ocp.Checkpointer(ocp.PyTreeCheckpointHandler())
@@ -121,7 +129,7 @@ def main(_):
             metrics = {}
 
             src, tgt, offsets = prepare_rvm_src_tgt_pairs(
-                clips, FLAGS.src_frames, max_offset=FLAGS.max_offset
+                clips, FLAGS.src_frames, FLAGS.tgt_frames
                 )
 
             train_key, rng_key = jax.random.split(rng_key)
@@ -135,10 +143,14 @@ def main(_):
                 offsets,
                 train_key,
             )
+            metrics.update(train_metrics)
 
             if step % FLAGS.eval_interval == 0:
-                pass
-                # eval
+                eval_key, rng_key = jax.random.split(rng_key)
+                eval_metrics = full_evaluation(
+                    model, test_dataset, params, FLAGS.src_frames, FLAGS.tgt_frames, FLAGS.batch_size, eval_key
+                )
+                metrics.update(eval_metrics)
 
             if step % FLAGS.save_interval == 0:
                 state = {

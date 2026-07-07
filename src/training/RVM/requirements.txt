@@ -1,0 +1,11 @@
+zarr
+numpy
+absl-py
+wandb
+wandb[media]
+jax[cuda12]
+flax
+optax
+orbax-checkpoint
+scikit-learn
+matplotlib

@@ -6,7 +6,7 @@ import optax
 @jax.jit
 def update_model(
     model,
-    params,
+    model_params,
     opt_state,
     optimizer,
     sources,
@@ -14,9 +14,7 @@ def update_model(
     target_deltas,
     rng_key,
 ):
-    if target_deltas is None:
-        target_deltas = jnp.zeros(targets.shape[:2], dtype=jnp.int32)
-
+    @jax.jit
     def loss_fn(params):
         output = model.apply(
             {"params": params},
@@ -30,17 +28,21 @@ def update_model(
         reconstructed = output["reconstructed"]
         mask = output["mask"]
 
+        mask = jax.image.resize(
+            mask, targets.shape[:-1] + (1,), method='nearest'
+        )
+
         mse_loss = jnp.mean(mask * (reconstructed - targets) ** 2)
 
         return mse_loss
 
-    loss_value, grads = jax.value_and_grad(loss_fn)(params)
+    loss_value, grads = jax.value_and_grad(loss_fn)(model_params)
 
-    updates, opt_state = optimizer.update(grads, opt_state, params)
-    params = optax.apply_updates(params, updates)
+    updates, opt_state = optimizer.update(grads, opt_state, model_params)
+    model_params = optax.apply_updates(model_params, updates)
 
     metrics = {
-        "loss": loss_value,
+        "training/loss": loss_value,
     }
 
-    return params, opt_state, metrics
+    return model_params, opt_state, metrics
