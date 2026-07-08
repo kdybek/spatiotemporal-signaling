@@ -20,7 +20,7 @@ export WANDB_API_KEY=$(cat ~/.wandb_key)
 cd ~/spatiotemporal-signaling/src/training/RVM
 source .venv/bin/activate
 
-python main.py --dataset_path $DATA_DIR/geminin_drugs_16x2x224x224_train.zarr \
+python main.py --dataset_path $DATA_DIR/geminin_drugs_full_vid.zarr \
                --run_group rvm \
                --save_dir checkpoints/rvm \
                --steps 300000 \
