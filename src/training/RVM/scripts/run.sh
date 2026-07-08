@@ -26,4 +26,5 @@ python main.py --dataset_path $DATA_DIR/geminin_drugs_full_vid.zarr \
                --steps 300000 \
                --eval_interval 10000 \
                --save_interval 20000 \
+               --train_split 0.8 \
                --batch_size 32
