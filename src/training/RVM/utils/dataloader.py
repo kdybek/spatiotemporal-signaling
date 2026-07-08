@@ -2,6 +2,7 @@ import zarr
 import numpy as np
 import jax
 import jax.numpy as jnp
+import random
 from skimage.filters import butterworth
 import math
 from pathlib import Path
@@ -229,6 +230,7 @@ def create_train_test_datasets(
 
     print(f"Found {len(video_names)} viable videos out of {len(root)} total videos.")
 
+    random.shuffle(video_names)
     test_split = int(test_fraction * len(video_names))
     test_video_names = video_names[:test_split]
     train_video_names = video_names[test_split:]
