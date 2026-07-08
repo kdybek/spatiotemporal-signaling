@@ -81,6 +81,43 @@ def initialize_model(model, rng_key):
     return params
 
 
+def create_optimizer(
+    base_lr,
+    warmup_steps,
+    total_steps,
+):
+    warmup_schedule = optax.linear_schedule(
+        init_value=0.0,
+        end_value=base_lr,
+        transition_steps=warmup_steps,
+    )
+
+    cosine_schedule = optax.cosine_decay_schedule(
+        init_value=base_lr,
+        decay_steps=total_steps - warmup_steps,
+    )
+
+    schedule = optax.join_schedules(
+        schedules=[
+            warmup_schedule,
+            cosine_schedule,
+        ],
+        boundaries=[
+            warmup_steps,
+        ],
+    )
+
+    optimizer = optax.adamw(
+        learning_rate=schedule,
+        weight_decay=0.05,
+        b1=0.9,
+        b2=0.95,
+        eps=1e-8,
+    )
+
+    return optimizer
+
+
 def main(_):
     exp_name = get_exp_name(FLAGS.seed)
     setup_wandb(project='Spaciotemporal Signaling',
@@ -121,7 +158,11 @@ def main(_):
     init_key, rng_key = jax.random.split(rng_key)
     params = initialize_model(model, init_key)
 
-    optimizer = optax.adam(learning_rate=FLAGS.learning_rate)
+    optimizer = create_optimizer(
+        base_lr=FLAGS.learning_rate,
+        warmup_steps=int(0.1 * FLAGS.steps),
+        total_steps=FLAGS.steps,
+    )
     opt_state = optimizer.init(params)
 
     eval_key, rng_key = jax.random.split(rng_key)

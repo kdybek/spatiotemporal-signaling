@@ -88,11 +88,11 @@ def visualize_reconstruction(reconstructed, target, mask):
     C = target.shape[-1]
     for c in range(C):
         metrics[f"evaluation/channel_{c}/masked_view"] = wandb.Video(
-            np.repeat(masked_view[..., c][..., np.newaxis], 3, axis=-1))
+            np.repeat(masked_view[..., c][..., np.newaxis], 3, axis=-1), format="mp4")
         metrics[f"evaluation/channel_{c}/combined"] = wandb.Video(
-            np.repeat(combined[..., c][..., np.newaxis], 3, axis=-1))
+            np.repeat(combined[..., c][..., np.newaxis], 3, axis=-1), format="mp4")
         metrics[f"evaluation/channel_{c}/target"] = wandb.Video(
-            np.repeat(target[..., c][..., np.newaxis], 3, axis=-1))
+            np.repeat(target[..., c][..., np.newaxis], 3, axis=-1), format="mp4")
 
     return metrics
 
