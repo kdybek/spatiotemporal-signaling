@@ -23,8 +23,8 @@ source .venv/bin/activate
 python main.py --dataset_path $DATA_DIR/geminin_drugs_full_vid.zarr \
                --run_group rvm \
                --save_dir checkpoints/rvm \
-               --steps 300000 \
-               --eval_interval 10000 \
-               --save_interval 20000 \
+               --steps 100000 \
+               --eval_interval 1000 \
+               --save_interval 10000 \
                --train_split 0.8 \
                --batch_size 16

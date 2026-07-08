@@ -160,7 +160,7 @@ def main(_):
 
     optimizer = create_optimizer(
         base_lr=FLAGS.learning_rate,
-        warmup_steps=int(0.1 * FLAGS.steps),
+        warmup_steps=int(0.01 * FLAGS.steps),
         total_steps=FLAGS.steps,
     )
     opt_state = optimizer.init(params)

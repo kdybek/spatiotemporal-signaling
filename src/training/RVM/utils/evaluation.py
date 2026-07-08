@@ -74,25 +74,25 @@ def compute_outputs(
     return reconstruced, masks, features, targets, all_exp_names
 
 
-def visualize_reconstruction(reconstructed, target, mask):
+def visualize_reconstruction(reconstructed, targets, masks, max_samples=8):
     reconstructed = np.clip(reconstructed, 0, 1)
-    masked_view = target * (1 - mask) + 0.5 * mask
-    combined = target * (1 - mask) + reconstructed * mask
+    masked_view = targets * (1 - masks) + 0.5 * masks
+    combined = targets * (1 - masks) + reconstructed * masks
 
     masked_view = (masked_view * 255).astype(np.uint8)
     combined = (combined * 255).astype(np.uint8)
-    target = (target * 255).astype(np.uint8)
+    target = (targets * 255).astype(np.uint8)
 
     metrics = {}
 
     C = target.shape[-1]
     for c in range(C):
-        metrics[f"evaluation/channel_{c}/masked_view"] = wandb.Video(
-            np.repeat(masked_view[..., c][..., np.newaxis], 3, axis=-1), format="mp4")
-        metrics[f"evaluation/channel_{c}/combined"] = wandb.Video(
-            np.repeat(combined[..., c][..., np.newaxis], 3, axis=-1), format="mp4")
-        metrics[f"evaluation/channel_{c}/target"] = wandb.Video(
-            np.repeat(target[..., c][..., np.newaxis], 3, axis=-1), format="mp4")
+        for i in range(min(max_samples, target.shape[0])):
+            metrics[f"evaluation/channel_{c}/image_set_{i}"] = [
+                wandb.Image(target[i, 0, ..., c], caption="Target"),
+                wandb.Image(masked_view[i, 0, ..., c], caption="Masked View"),
+                wandb.Image(combined[i, 0, ..., c], caption="Reconstructed"),
+            ]
 
     return metrics
 
