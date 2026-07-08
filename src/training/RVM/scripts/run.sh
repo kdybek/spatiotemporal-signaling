@@ -12,7 +12,7 @@
 #SBATCH --mem=64G
 
 export SCRATCH=~/myscratch
-export DATA_DIR=/mnt/imaging.data/zppmimuw
+export DATA_DIR=~/myimaging
 
 export XDG_CACHE_HOME=$SCRATCH/.cache
 export WANDB_API_KEY=$(cat ~/.wandb_key)
@@ -26,4 +26,4 @@ python main.py --dataset_path $DATA_DIR/geminin_drugs_full_vid.zarr \
                --steps 300000 \
                --eval_interval 10000 \
                --save_interval 20000 \
-               --batch_size 32 \
+               --batch_size 32
