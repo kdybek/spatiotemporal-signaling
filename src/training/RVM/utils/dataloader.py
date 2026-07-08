@@ -5,6 +5,7 @@ import jax.numpy as jnp
 from skimage.filters import butterworth
 import math
 from pathlib import Path
+from functools import partial
 
 
 DATASET_T_CHUNK = 32
@@ -193,7 +194,7 @@ class ZarrVideoDataset():
         exp_name = Path(path).name
 
         return video, exp_name
-    
+
 
 def create_train_test_datasets(
     test_fraction,
@@ -282,17 +283,27 @@ def batch_iterator(dataset, batch_size, shuffle=True, exp_name=False):
             yield clips
 
 
-@jax.jit
-def prepare_rvm_src_tgt_pairs(clip_batch, src_frames, tgt_frames):
-    clip_batch = jnp.transpose(clip_batch, (0, 1, 3, 4, 2))  # (B, T, H, W, C)
-    B = clip_batch.shape[0]
-    T = clip_batch.shape[1]
+@partial(jax.jit, static_argnames=['src_frames', 'tgt_frames'])
+def prepare_rvm_src_tgt_pairs(rng_key, clip_batch, src_frames, tgt_frames):
+    # (B, T, C, H, W) -> (B, T, H, W, C)
+    clip_batch = jnp.transpose(clip_batch, (0, 1, 3, 4, 2))
 
-    src_batch = clip_batch[:, :src_frames]  # (B, src_frames, H, W, C)
+    B, T = clip_batch.shape[:2]
+
+    src_batch = clip_batch[:, :src_frames]
 
     max_offset = T - src_frames
-    offsets = jnp.random.randint(1, max_offset + 1, size=(B, tgt_frames))
-    idx = offsets + src_frames - 1
-    tgt_batch = clip_batch[jnp.arange(B)[:, None], idx]  # (B, tgt_frames, H, W, C)
+    if max_offset <= 0:
+        raise ValueError("src_frames must be smaller than the clip length.")
+
+    offsets = jax.random.randint(
+        rng_key,
+        shape=(B, tgt_frames),
+        minval=1,
+        maxval=max_offset + 1,
+    )
+
+    idx = src_frames - 1 + offsets
+    tgt_batch = clip_batch[jnp.arange(B)[:, None], idx]
 
     return src_batch, tgt_batch, offsets

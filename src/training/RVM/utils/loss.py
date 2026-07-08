@@ -3,7 +3,6 @@ import jax.numpy as jnp
 import optax
 
 
-@jax.jit
 def update_model(
     model,
     model_params,
@@ -14,14 +13,12 @@ def update_model(
     target_deltas,
     rng_key,
 ):
-    @jax.jit
     def loss_fn(params):
         output = model.apply(
             {"params": params},
             sources,
             targets,
             target_deltas,
-            method=model.reconstruct,
             rngs=rng_key,
         )
 

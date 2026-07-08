@@ -10,51 +10,56 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import StratifiedKFold, cross_val_score
 import matplotlib.pyplot as plt
+from functools import partial
 
 from utils.dataloader import batch_iterator, prepare_rvm_src_tgt_pairs
 
 
-@jax.jit
-def forward(model, params, sources, targets, target_deltas, rng_key):
-    output = model.apply(
-        {"params": params},
-        sources,
-        targets,
-        target_deltas,
-        method=model.reconstruct,
-        rngs=rng_key,
-    )
-
-    mask = jax.image.resize(
-        output["mask"], targets.shape[:-1] + (1,), method='nearest'
-    )
-    output["mask"] = mask
-
-    return output
-
-
 def compute_outputs(
     model,
-    test_dataset, 
-    params, 
-    src_frames, 
-    tgt_frames, 
-    batch_size, 
+    test_dataset,
+    params,
+    src_frames,
+    tgt_frames,
+    batch_size,
     rng_key
 ):
+    @jax.jit
+    def forward(sources, targets, target_deltas, rng):
+        output = model.apply(
+            {"params": params},
+            sources,
+            targets,
+            target_deltas,
+            rngs={"default": rng},
+        )
+
+        mask = jax.image.resize(
+            output["mask"],
+            targets.shape[:-1] + (1,),
+            method="nearest",
+        )
+        features = output["features"][:, -1, ...]  # Discard intermediates
+
+        output["mask"] = mask
+        output["features"] = features
+
+        return output
+
     reconstruced = []
     masks = []
     features = []
     targets = []
     all_exp_names = []
     for clips, exp_names in tqdm(batch_iterator(test_dataset, batch_size=batch_size, exp_name=True)):
+        offset_key, rng_key = jax.random.split(rng_key)
         src, tgt, offsets = prepare_rvm_src_tgt_pairs(
-            clips, src_frames, tgt_frames
+            offset_key, clips, src_frames, tgt_frames
         )
         all_exp_names.extend(exp_names)
 
         eval_key, rng_key = jax.random.split(rng_key)
-        output = forward(model, params, src, tgt, offsets, eval_key)
+        output = forward(src, tgt, offsets, rng=eval_key)
 
         reconstruced.extend(np.array(output["reconstructed"]))
         masks.extend(np.array(output["mask"]))
@@ -82,34 +87,39 @@ def visualize_reconstruction(reconstructed, target, mask):
 
     C = target.shape[-1]
     for c in range(C):
-        metrics[f"evaluation/channel_{c}/masked_view"] = wandb.Video(masked_view[..., c])
-        metrics[f"evaluation/channel_{c}/combined"] = wandb.Video(combined[..., c])
-        metrics[f"evaluation/channel_{c}/target"] = wandb.Video(target[..., c])
+        metrics[f"evaluation/channel_{c}/masked_view"] = wandb.Video(
+            np.repeat(masked_view[..., c][..., np.newaxis], 3, axis=-1))
+        metrics[f"evaluation/channel_{c}/combined"] = wandb.Video(
+            np.repeat(combined[..., c][..., np.newaxis], 3, axis=-1))
+        metrics[f"evaluation/channel_{c}/target"] = wandb.Video(
+            np.repeat(target[..., c][..., np.newaxis], 3, axis=-1))
 
     return metrics
 
 
 def visualize_features(features, labels):
-    print(f"Visualizing features with initial shape: {features.shape}")
-    features = features.mean(axis=1)  # Average over patches
-
-    assert len(labels) == features.shape[0], "Number of labels must match the number of feature vectors."
+    features = features[:, 1:, ...].mean(axis=1)  # Average over the spatial dimension
+    assert len(
+        labels) == features.shape[0], "Number of labels must match the number of feature vectors."
 
     encoder = LabelEncoder()
     y = encoder.fit_transform(labels)
 
+    if len(features) < 2:
+        return {}
+
     tsne = TSNE(
         n_components=2,
-        perplexity=30,
+        perplexity=min(30, len(features)),
         random_state=42,
     )
-    latent_trajs_2d = tsne.fit_transform(features)
+    tsne_features = tsne.fit_transform(features)
 
     fig, ax = plt.subplots(figsize=(8, 8))
 
     ax.scatter(
-        latent_trajs_2d[:, 0],
-        latent_trajs_2d[:, 1],
+        tsne_features[:, 0],
+        tsne_features[:, 1],
         c=y,
         s=10,
     )
@@ -120,10 +130,15 @@ def visualize_features(features, labels):
 
 
 def evaluate_probing(features, labels, cv=5, random_state=42):
-    features = features.mean(axis=1)  # Average over patches
-
     assert len(labels) == features.shape[0], \
         "Number of labels must match the number of feature vectors."
+
+    if len(features) < cv:
+        return {}
+
+    features_cls = features[:, 0, ...]  # Use the cls token
+    features_mean = features[:, 1:, ...].mean(
+        axis=1)  # Average over the spatial dimension
 
     clf = Pipeline([
         ("scaler", StandardScaler()),
@@ -136,17 +151,26 @@ def evaluate_probing(features, labels, cv=5, random_state=42):
         random_state=random_state
     )
 
-    scores = cross_val_score(
+    scores_cls = cross_val_score(
         clf,
-        features,
+        features_cls,
+        labels,
+        cv=cv_split,
+        scoring="accuracy"
+    )
+    scores_mean = cross_val_score(
+        clf,
+        features_mean,
         labels,
         cv=cv_split,
         scoring="accuracy"
     )
 
     return {
-        "evaluation/probing/mean_accuracy": np.mean(scores),
-        "evaluation/probing/std_accuracy": np.std(scores),
+        "evaluation/probing_mean_acc_cls": np.mean(scores_cls),
+        "evaluation/probing_mean_acc_mean": np.mean(scores_mean),
+        "evaluation/probing_std_acc_cls": np.std(scores_cls),
+        "evaluation/probing_std_acc_mean": np.std(scores_mean),
     }
 
 
@@ -170,5 +194,5 @@ def full_evaluation(model, test_dataset, params, src_frames, tgt_frames, batch_s
     metrics.update(visualize_reconstruction(reconstruced, targets, masks))
     metrics.update(visualize_features(features, exp_names))
     metrics.update(evaluate_probing(features, exp_names))
-    
+
     return metrics

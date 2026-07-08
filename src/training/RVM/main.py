@@ -10,11 +10,11 @@ import os
 import wandb
 import json
 
-from utils.model import model
+from utils.model import get_rvm
 from utils.logging import get_exp_name, setup_wandb
 from utils.dataloader import create_train_test_datasets, TransformPipeline, prepare_rvm_src_tgt_pairs, batch_iterator
-from utils.loss import update_model
 from utils.evaluation import full_evaluation
+from utils.loss import update_model
 
 
 FLAGS = flags.FLAGS
@@ -33,7 +33,7 @@ flags.DEFINE_string('save_dir', 'checkpoints',
 flags.DEFINE_float('learning_rate', 1e-4, 'Learning rate for the optimizer.')
 flags.DEFINE_integer(
     'batch_size', 16, 'Batch size for training and evaluation.')
-flags.DEFINE_float('train_split', 0.8,
+flags.DEFINE_float('train_split', 0.5,
                    'Proportion of data to use for training (rest is for validation).')
 flags.DEFINE_integer('clip_size', 224, 'Height and width of input images.')
 flags.DEFINE_integer('clip_frames', 16, 'Number of frames in each video clip.')
@@ -43,7 +43,10 @@ flags.DEFINE_string('channel_names', 'Ch_ERK-KTR',
                     'Space-separated list of channel names to use from the videos.')
 
 flags.DEFINE_integer('src_frames', 4, 'Number of source frames for reconstruction.')
-flags.DEFINE_integer('tgt_frames', 1, 'Number of target frames for reconstruction.')
+flags.DEFINE_integer('tgt_frames', 4, 'Number of target frames for reconstruction.')
+flags.DEFINE_float('masking_ratio', 0.95,
+                   'Ratio of target tokens to mask during training.')
+flags.DEFINE_string('encoder_variant', 'L', 'Variant of the encoder to use.')
 
 flags.DEFINE_string('transforms', 'arcsinh butterworth percentile_norm',
                     'Space-separated list of transforms to apply to the videos. Supported: percentile_norm, arcsinh, log1p, butterworth.')
@@ -57,7 +60,6 @@ flags.DEFINE_boolean('per_frame_butterworth', False,
                      'Whether to apply Butterworth filter independently to each frame (instead of across time).')
 
 
-
 def set_seed(seed):
     # Python
     random.seed(seed)
@@ -69,9 +71,11 @@ def set_seed(seed):
 
 def initialize_model(model, rng_key):
     num_channels = len(FLAGS.channel_names.split())
-    dummy_src = jnp.ones((1, FLAGS.src_frames, FLAGS.clip_size, FLAGS.clip_size, num_channels), dtype=jnp.float32)
-    dummy_tgt = jnp.ones((1, 1, FLAGS.clip_size, FLAGS.clip_size, num_channels), dtype=jnp.float32)
-    dummy_deltas = jnp.zeros((1,), dtype=jnp.int32)
+    dummy_src = jnp.ones((1, FLAGS.src_frames, FLAGS.clip_size,
+                         FLAGS.clip_size, num_channels), dtype=jnp.float32)
+    dummy_tgt = jnp.ones((1, FLAGS.tgt_frames, FLAGS.clip_size, FLAGS.clip_size,
+                         num_channels), dtype=jnp.float32)
+    dummy_deltas = jnp.zeros((1, FLAGS.tgt_frames), dtype=jnp.int32)
 
     params = model.init(rng_key, dummy_src, dummy_tgt, dummy_deltas)['params']
     return params
@@ -108,6 +112,12 @@ def main(_):
         transform_pipeline=transform_pipeline,
     )
 
+    model = get_rvm(
+        num_channels=len(FLAGS.channel_names.split()),
+        masking_ratio=FLAGS.masking_ratio,
+        encoder_variant=FLAGS.encoder_variant,
+    )
+
     init_key, rng_key = jax.random.split(rng_key)
     params = initialize_model(model, init_key)
 
@@ -122,22 +132,41 @@ def main(_):
 
     checkpointer = ocp.Checkpointer(ocp.PyTreeCheckpointHandler())
 
+    @jax.jit
+    def training_step(
+        params,
+        opt_state,
+        sources,
+        targets,
+        target_deltas,
+        rng_key,
+    ):
+        return update_model(
+            model,
+            params,
+            opt_state,
+            optimizer,
+            sources,
+            targets,
+            target_deltas,
+            rng_key,
+        )
+
     step = 1
     metrics = {}
     while step < FLAGS.steps + 1:
         for clips in tqdm(batch_iterator(train_dataset, FLAGS.batch_size)):
             metrics = {}
 
+            offset_key, rng_key = jax.random.split(rng_key)
             src, tgt, offsets = prepare_rvm_src_tgt_pairs(
-                clips, FLAGS.src_frames, FLAGS.tgt_frames
-                )
+                offset_key, clips, FLAGS.src_frames, FLAGS.tgt_frames
+            )
 
             train_key, rng_key = jax.random.split(rng_key)
-            params, opt_state, train_metrics = update_model(
-                model,
+            params, opt_state, train_metrics = training_step(
                 params,
                 opt_state,
-                optimizer,
                 src,
                 tgt,
                 offsets,
@@ -148,7 +177,13 @@ def main(_):
             if step % FLAGS.eval_interval == 0:
                 eval_key, rng_key = jax.random.split(rng_key)
                 eval_metrics = full_evaluation(
-                    model, test_dataset, params, FLAGS.src_frames, FLAGS.tgt_frames, FLAGS.batch_size, eval_key
+                    model,
+                    test_dataset,
+                    params,
+                    FLAGS.src_frames,
+                    FLAGS.tgt_frames,
+                    FLAGS.batch_size,
+                    eval_key
                 )
                 metrics.update(eval_metrics)
 
