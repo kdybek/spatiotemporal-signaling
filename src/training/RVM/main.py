@@ -59,6 +59,8 @@ flags.DEFINE_integer('butterworth_order', 2,
 flags.DEFINE_boolean('per_frame_butterworth', False,
                      'Whether to apply Butterworth filter independently to each frame (instead of across time).')
 
+flags.DEFINE_string('checkpoint_path', None, 'Path to a checkpoint to load model parameters from'.)
+
 
 def set_seed(seed):
     # Python
@@ -118,6 +120,11 @@ def create_optimizer(
     return optimizer
 
 
+def load_checkpoint(checkpointer, checkpoint_path):
+    state = checkpointer.restore(os.path.abspath(checkpoint_path))
+    return state['params'], state['opt_state'], state['step']
+
+
 def main(_):
     exp_name = get_exp_name(FLAGS.seed)
     setup_wandb(project='Spaciotemporal Signaling',
@@ -160,16 +167,17 @@ def main(_):
 
     optimizer = create_optimizer(
         base_lr=FLAGS.learning_rate,
-        warmup_steps=int(0.01 * FLAGS.steps),
+        warmup_steps=int(0.05 * FLAGS.steps),
         total_steps=FLAGS.steps,
     )
     opt_state = optimizer.init(params)
 
-    eval_key, rng_key = jax.random.split(rng_key)
-    eval_metrics = full_evaluation(
-        model, test_dataset, params, FLAGS.src_frames, FLAGS.tgt_frames, FLAGS.batch_size, eval_key
-    )
-    wandb.log(eval_metrics, step=0)
+    if FLAGS.checkpoint_path is not None:
+        eval_key, rng_key = jax.random.split(rng_key)
+        eval_metrics = full_evaluation(
+            model, test_dataset, params, FLAGS.src_frames, FLAGS.tgt_frames, FLAGS.batch_size, eval_key
+        )
+        wandb.log(eval_metrics, step=0)
 
     checkpointer = ocp.Checkpointer(ocp.PyTreeCheckpointHandler())
 
@@ -194,7 +202,9 @@ def main(_):
         )
 
     step = 1
-    metrics = {}
+    if FLAGS.checkpoint_path is not None:
+        params, opt_state, step = load_checkpoint(checkpointer, FLAGS.checkpoint_path)
+
     while step < FLAGS.steps + 1:
         for clips in tqdm(batch_iterator(train_dataset, FLAGS.batch_size)):
             metrics = {}
@@ -235,7 +245,7 @@ def main(_):
                     'opt_state': opt_state,
                 }
                 checkpointer.save(
-                    os.path.join(FLAGS.save_dir, f'checkpoint_{step}'),
+                    os.path.abspath(os.path.join(FLAGS.save_dir, f'checkpoint_{step}')),
                     state,
                 )
 
