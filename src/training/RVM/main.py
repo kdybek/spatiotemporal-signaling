@@ -59,7 +59,7 @@ flags.DEFINE_integer('butterworth_order', 2,
 flags.DEFINE_boolean('per_frame_butterworth', False,
                      'Whether to apply Butterworth filter independently to each frame (instead of across time).')
 
-flags.DEFINE_string('checkpoint_path', None, 'Path to a checkpoint to load model parameters from'.)
+flags.DEFINE_string('checkpoint_path', None, 'Path to a checkpoint to load model parameters from.')
 
 
 def set_seed(seed):
