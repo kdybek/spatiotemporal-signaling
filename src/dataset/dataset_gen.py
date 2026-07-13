@@ -120,7 +120,7 @@ def create_zarr_dataset(
         arr = root.create_array(
             name=f"{idx}",
             data=video,
-            chunks=(32, 1, 224, 224),
+            chunks=(64, 1, 256, 256),
             compressors=compressors,
         )
         idx += 1
@@ -154,8 +154,8 @@ def main():
     parser.add_argument(
         "--acq_freq",
         type=float,
-        default=15.0,
-        help="Target acquisition frequency in minutes (default: 1.0)"
+        default=30.0,
+        help="Target acquisition frequency in minutes (default: 30.0)"
     )
 
     parser.add_argument(

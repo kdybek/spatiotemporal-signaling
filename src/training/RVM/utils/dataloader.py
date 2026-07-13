@@ -9,9 +9,9 @@ from pathlib import Path
 from functools import partial
 
 
-DATASET_T_CHUNK = 32
-DATASET_H_CHUNK = 224
-DATASET_W_CHUNK = 224
+DATASET_T_CHUNK = 64
+DATASET_H_CHUNK = 256
+DATASET_W_CHUNK = 256
 
 
 def percentile_norm(video):

@@ -35,7 +35,7 @@ flags.DEFINE_integer('batch_size', 16,
                      'Batch size for training and evaluation.')
 flags.DEFINE_float('train_split', 0.5,
                    'Proportion of data to use for training (rest is for validation).')
-flags.DEFINE_integer('clip_size', 224, 'Height and width of input images.')
+flags.DEFINE_integer('clip_size', 256, 'Height and width of input images.')
 flags.DEFINE_integer('clip_frames', 64, 'Number of frames in each video clip.')
 flags.DEFINE_integer('acq_freq', 30,
                      'Acquisition frequency (in minutes) for sampling video clips.')
@@ -179,10 +179,19 @@ def main(_):
     )
     opt_state = optimizer.init(params)
 
-    if FLAGS.checkpoint_path is not None:
+    if FLAGS.checkpoint_path is None:
         eval_key, rng_key = jax.random.split(rng_key)
         eval_metrics = full_evaluation(
-            model, test_dataset, params, FLAGS.src_frames, FLAGS.tgt_frames, FLAGS.batch_size, eval_key
+            model,
+            test_dataset,
+            params,
+            FLAGS.src_frames,
+            FLAGS.tgt_frames,
+            FLAGS.src_sample_prefix,
+            FLAGS.min_offset,
+            FLAGS.max_offset,
+            FLAGS.batch_size,
+            eval_key
         )
         wandb.log(eval_metrics, step=0)
 
