@@ -285,27 +285,62 @@ def batch_iterator(dataset, batch_size, shuffle=True, exp_name=False):
             yield clips
 
 
-@partial(jax.jit, static_argnames=['src_frames', 'tgt_frames'])
-def prepare_rvm_src_tgt_pairs(rng_key, clip_batch, src_frames, tgt_frames):
+@partial(jax.jit, static_argnames=('src_frames', 'tgt_frames', 'src_sample_prefix', 'min_offset', 'max_offset'))
+def prepare_rvm_src_tgt_pairs(
+        rng_key,
+        clip_batch,
+        src_frames,
+        tgt_frames,
+        src_sample_prefix,
+        min_offset,
+        max_offset
+):
+    """
+    Prepares source and target pairs for RVM training.
+
+    Args:
+        rng_key: JAX random key for generating random numbers.
+        clip_batch: A batch of video clips with shape (B, T, C, H, W).
+        src_frames: Number of source frames to select.
+        tgt_frames: Number of target frames to select.
+        src_sample_prefix: Prefix length for source sample selection.
+        min_offset: Minimum offset for target frame selection.
+        max_offset: Maximum offset for target frame selection.
+
+    Returns:
+        src_batch: A batch of source frames.
+        tgt_batch: A batch of target frames.
+        offsets: A batch of offsets used for target frames.
+    """
     # (B, T, C, H, W) -> (B, T, H, W, C)
     clip_batch = jnp.transpose(clip_batch, (0, 1, 3, 4, 2))
 
     B, T = clip_batch.shape[:2]
 
-    src_batch = clip_batch[:, :src_frames]
+    assert src_sample_prefix + max_offset <= T
+    assert src_frames <= src_sample_prefix
 
-    max_offset = T - src_frames
-    if max_offset <= 0:
-        raise ValueError("src_frames must be smaller than the clip length.")
+    src_key, tgt_key = jax.random.split(rng_key)
 
-    offsets = jax.random.randint(
-        rng_key,
-        shape=(B, tgt_frames),
-        minval=1,
-        maxval=max_offset + 1,
+    max_src_init_idx = src_sample_prefix - src_frames
+    init_src_idx = jax.random.randint(
+        src_key,
+        shape=(B,),
+        minval=0,
+        maxval=max_src_init_idx,
     )
 
-    idx = src_frames - 1 + offsets
-    tgt_batch = clip_batch[jnp.arange(B)[:, None], idx]
+    src_idx = init_src_idx[:, None] + jnp.arange(src_frames)[None, :]
+    src_batch = clip_batch[jnp.arange(B)[:, None], src_idx]
+
+    offsets = jax.random.randint(
+        tgt_key,
+        shape=(B, tgt_frames),
+        minval=min_offset,
+        maxval=max_offset,
+    )
+
+    tgt_idx = src_idx[:, -1:] + offsets
+    tgt_batch = clip_batch[jnp.arange(B)[:, None], tgt_idx]
 
     return src_batch, tgt_batch, offsets

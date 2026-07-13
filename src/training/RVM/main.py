@@ -31,19 +31,25 @@ flags.DEFINE_string('save_dir', 'checkpoints',
                     'Directory to save model checkpoints.')
 
 flags.DEFINE_float('learning_rate', 1e-4, 'Learning rate for the optimizer.')
-flags.DEFINE_integer(
-    'batch_size', 16, 'Batch size for training and evaluation.')
+flags.DEFINE_integer('batch_size', 16,
+                     'Batch size for training and evaluation.')
 flags.DEFINE_float('train_split', 0.5,
                    'Proportion of data to use for training (rest is for validation).')
 flags.DEFINE_integer('clip_size', 224, 'Height and width of input images.')
-flags.DEFINE_integer('clip_frames', 16, 'Number of frames in each video clip.')
-flags.DEFINE_integer(
-    'acq_freq', 30, 'Acquisition frequency (in minutes) for sampling video clips.')
+flags.DEFINE_integer('clip_frames', 64, 'Number of frames in each video clip.')
+flags.DEFINE_integer('acq_freq', 30,
+                     'Acquisition frequency (in minutes) for sampling video clips.')
 flags.DEFINE_string('channel_names', 'Ch_ERK-KTR',
                     'Space-separated list of channel names to use from the videos.')
 
 flags.DEFINE_integer('src_frames', 4, 'Number of source frames for reconstruction.')
 flags.DEFINE_integer('tgt_frames', 4, 'Number of target frames for reconstruction.')
+flags.DEFINE_integer('src_sample_prefix', 16,
+                     'Clip prefix length for source frames sampling.')
+flags.DEFINE_integer('min_offset', 4,
+                     'Minimum offset between source and target frames.')
+flags.DEFINE_integer('max_offset', 48,
+                     'Maximum offset between source and target frames.')
 flags.DEFINE_float('masking_ratio', 0.95,
                    'Ratio of target tokens to mask during training.')
 flags.DEFINE_string('encoder_variant', 'L', 'Variant of the encoder to use.')
@@ -59,7 +65,8 @@ flags.DEFINE_integer('butterworth_order', 2,
 flags.DEFINE_boolean('per_frame_butterworth', False,
                      'Whether to apply Butterworth filter independently to each frame (instead of across time).')
 
-flags.DEFINE_string('checkpoint_path', None, 'Path to a checkpoint to load model parameters from.')
+flags.DEFINE_string('checkpoint_path', None,
+                    'Path to a checkpoint to load model parameters from.')
 
 
 def set_seed(seed):
@@ -211,7 +218,13 @@ def main(_):
 
             offset_key, rng_key = jax.random.split(rng_key)
             src, tgt, offsets = prepare_rvm_src_tgt_pairs(
-                offset_key, clips, FLAGS.src_frames, FLAGS.tgt_frames
+                offset_key,
+                clips,
+                FLAGS.src_frames,
+                FLAGS.tgt_frames,
+                FLAGS.src_sample_prefix,
+                FLAGS.min_offset,
+                FLAGS.max_offset
             )
 
             train_key, rng_key = jax.random.split(rng_key)
