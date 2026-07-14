@@ -187,7 +187,7 @@ def full_evaluation(
         batch_size,
         rng_key
 ):
-    reconstruced, masks, features, targets, exp_names = compute_outputs(
+    reconstructed, masks, features, targets, exp_names = compute_outputs(
         model,
         test_dataset,
         params,
@@ -200,13 +200,14 @@ def full_evaluation(
         rng_key
     )
 
-    mse_loss = np.mean(masks * (reconstruced - targets) ** 2)
+    error = (reconstructed - targets) ** 2
+    mse_loss = np.sum(masks * error) / (np.sum(masks) + 1e-8)
 
     metrics = {
         "evaluation/loss": mse_loss,
     }
 
-    metrics.update(visualize_reconstruction(reconstruced, targets, masks))
+    metrics.update(visualize_reconstruction(reconstructed, targets, masks))
     metrics.update(visualize_features(features, exp_names))
     metrics.update(evaluate_probing(features, exp_names))
 

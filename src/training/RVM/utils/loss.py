@@ -19,7 +19,7 @@ def update_model(
             sources,
             targets,
             target_deltas,
-            rngs=rng_key,
+            rngs={"default": rng_key},
         )
 
         reconstructed = output["reconstructed"]
@@ -29,7 +29,8 @@ def update_model(
             mask, targets.shape[:-1] + (1,), method='nearest'
         )
 
-        mse_loss = jnp.mean(mask * (reconstructed - targets) ** 2)
+        error = (reconstructed - targets) ** 2
+        mse_loss = jnp.sum(mask * error) / (jnp.sum(mask) + 1e-8)
 
         return mse_loss
 
