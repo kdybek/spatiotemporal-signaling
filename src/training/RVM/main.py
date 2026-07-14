@@ -257,6 +257,9 @@ def main(_):
                     params,
                     FLAGS.src_frames,
                     FLAGS.tgt_frames,
+                    FLAGS.src_sample_prefix,
+                    FLAGS.min_offset,
+                    FLAGS.max_offset,
                     FLAGS.batch_size,
                     eval_key
                 )
