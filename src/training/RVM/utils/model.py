@@ -625,10 +625,25 @@ class VideoSiamMAE(nn.Module):
         }
 
 
-def get_rvm(num_channels, masking_ratio, encoder_variant):
+def get_rvm(num_channels, masking_ratio, variant='B'):
+    if variant == 'L':
+        encoder_variant = 'L'
+        embed_dim = 1024
+        rnn_heads = 16
+    elif variant == 'B':
+        encoder_variant = 'B'
+        embed_dim = 768
+        rnn_heads = 12
+    elif variant == 'S':
+        encoder_variant = 'S'
+        embed_dim = 384
+        rnn_heads = 8
+    else:
+        raise ValueError(f'Unknown variant: {variant}')
+
     return VideoSiamMAE(
         tokenizer=Tokenizer(
-            patch_embedding=PatchEmbedding(patch_size=[1, 16, 16], num_features=1024),
+            patch_embedding=PatchEmbedding(patch_size=[1, 16, 16], num_features=embed_dim),
             posenc=SincosPosEmb(base_token_shape=[16, 16]),
         ),
         encoder=Transformer.from_variant_str(
@@ -636,16 +651,16 @@ def get_rvm(num_channels, masking_ratio, encoder_variant):
         rnn_core=GatedTransformerCore(
             transformer=CrossAttentionTransformer(
                 num_layers=4,
-                num_heads=16,
-                num_feats=1024,
-                mlp_dim=4096,
+                num_heads=rnn_heads,
+                num_feats=embed_dim,
+                mlp_dim=4 * embed_dim,
                 dtype=jax.numpy.bfloat16,
             ),
             initializer=RandomStateInit(),
-            token_dim=1024,
+            token_dim=embed_dim,
             state_layer_norm=nn.LayerNorm(epsilon=0.0001, use_scale=True, use_bias=False),
         ),
-        latent_emb_dim=1024,
+        latent_emb_dim=embed_dim,
         # Decoder components
         decoder=CrossAttentionTransformer(
             num_layers=8,

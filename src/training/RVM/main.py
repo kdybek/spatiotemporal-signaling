@@ -52,7 +52,7 @@ flags.DEFINE_integer('max_offset', 48,
                      'Maximum offset between source and target frames.')
 flags.DEFINE_float('masking_ratio', 0.95,
                    'Ratio of target tokens to mask during training.')
-flags.DEFINE_string('encoder_variant', 'L', 'Variant of the encoder to use.')
+flags.DEFINE_string('rvm_variant', 'B', 'Variant of the RVM to use.')
 
 flags.DEFINE_string('transforms', 'arcsinh butterworth percentile_norm',
                     'Space-separated list of transforms to apply to the videos. Supported: percentile_norm, arcsinh, log1p, butterworth.')
@@ -166,7 +166,7 @@ def main(_):
     model = get_rvm(
         num_channels=len(FLAGS.channel_names.split()),
         masking_ratio=FLAGS.masking_ratio,
-        encoder_variant=FLAGS.encoder_variant,
+        variant=FLAGS.rvm_variant,
     )
 
     init_key, rng_key = jax.random.split(rng_key)
