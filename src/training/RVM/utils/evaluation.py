@@ -54,9 +54,8 @@ def compute_outputs(
     targets = []
     all_exp_names = []
     for clips, exp_names in tqdm(batch_iterator(test_dataset, batch_size=batch_size, exp_name=True)):
-        offset_key, rng_key = jax.random.split(rng_key)
         src, tgt, offsets = prepare_rvm_src_tgt_pairs(
-            offset_key, clips, src_frames, tgt_frames, src_sample_prefix, min_offset, max_offset
+            clips, src_frames, tgt_frames, src_sample_prefix, min_offset, max_offset
         )
         all_exp_names.extend(exp_names)
 

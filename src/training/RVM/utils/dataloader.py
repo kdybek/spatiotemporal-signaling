@@ -6,7 +6,6 @@ import random
 from skimage.filters import butterworth
 import math
 from pathlib import Path
-from functools import partial
 
 
 DATASET_T_CHUNK = 64
@@ -276,7 +275,7 @@ def batch_iterator(dataset, batch_size, shuffle=True, exp_name=False):
 
         clips, exp_names = zip(*(dataset[i] for i in batch_idx))
 
-        clips = jnp.asarray(np.stack(clips))
+        clips = np.asarray(np.stack(clips))
         exp_names = list(exp_names)
 
         if exp_name:
@@ -285,9 +284,7 @@ def batch_iterator(dataset, batch_size, shuffle=True, exp_name=False):
             yield clips
 
 
-@partial(jax.jit, static_argnames=('src_frames', 'tgt_frames', 'src_sample_prefix', 'min_offset', 'max_offset'))
 def prepare_rvm_src_tgt_pairs(
-        rng_key,
         clip_batch,
         src_frames,
         tgt_frames,
@@ -299,7 +296,6 @@ def prepare_rvm_src_tgt_pairs(
     Prepares source and target pairs for RVM training.
 
     Args:
-        rng_key: JAX random key for generating random numbers.
         clip_batch: A batch of video clips with shape (B, T, C, H, W).
         src_frames: Number of source frames to select.
         tgt_frames: Number of target frames to select.
@@ -313,34 +309,34 @@ def prepare_rvm_src_tgt_pairs(
         offsets: A batch of offsets used for target frames.
     """
     # (B, T, C, H, W) -> (B, T, H, W, C)
-    clip_batch = jnp.transpose(clip_batch, (0, 1, 3, 4, 2))
+    clip_batch = np.transpose(clip_batch, (0, 1, 3, 4, 2))
 
     B, T = clip_batch.shape[:2]
 
     assert src_sample_prefix + max_offset <= T
     assert src_frames <= src_sample_prefix
 
-    src_key, tgt_key = jax.random.split(rng_key)
-
     max_src_init_idx = src_sample_prefix - src_frames
-    init_src_idx = jax.random.randint(
-        src_key,
-        shape=(B,),
-        minval=0,
-        maxval=max_src_init_idx,
+    init_src_idx = np.random.randint(
+        low=0,
+        high=max_src_init_idx + 1,
+        size=(B,),
     )
 
     src_idx = init_src_idx[:, None] + jnp.arange(src_frames)[None, :]
-    src_batch = clip_batch[jnp.arange(B)[:, None], src_idx]
+    src_batch = clip_batch[np.arange(B)[:, None], src_idx]
 
-    offsets = jax.random.randint(
-        tgt_key,
-        shape=(B, tgt_frames),
-        minval=min_offset,
-        maxval=max_offset,
+    offsets = np.random.randint(
+        low=min_offset,
+        high=max_offset + 1,
+        size=(B, tgt_frames),
     )
 
     tgt_idx = src_idx[:, -1:] + offsets
-    tgt_batch = clip_batch[jnp.arange(B)[:, None], tgt_idx]
+    tgt_batch = clip_batch[np.arange(B)[:, None], tgt_idx]
+
+    src_batch = jnp.asarray(src_batch)
+    tgt_batch = jnp.asarray(tgt_batch)
+    offsets = jnp.asarray(offsets)
 
     return src_batch, tgt_batch, offsets

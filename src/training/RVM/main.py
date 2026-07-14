@@ -225,9 +225,7 @@ def main(_):
         for clips in tqdm(batch_iterator(train_dataset, FLAGS.batch_size)):
             metrics = {}
 
-            offset_key, rng_key = jax.random.split(rng_key)
             src, tgt, offsets = prepare_rvm_src_tgt_pairs(
-                offset_key,
                 clips,
                 FLAGS.src_frames,
                 FLAGS.tgt_frames,
