@@ -1,11 +1,13 @@
 import zarr
 import numpy as np
-import jax
 import jax.numpy as jnp
 import random
 from skimage.filters import butterworth
 import math
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+from queue import Queue
+from threading import Thread
 
 
 DATASET_T_CHUNK = 64
@@ -264,24 +266,44 @@ def create_train_test_datasets(
     return train_dataset, test_dataset
 
 
-def batch_iterator(dataset, batch_size, shuffle=True, exp_name=False):
+def batch_iterator(dataset, batch_size, shuffle=True, exp_name=False, max_workers=64):
     indices = np.arange(len(dataset))
 
     if shuffle:
         np.random.shuffle(indices)
 
-    for start in range(0, len(indices), batch_size):
-        batch_idx = indices[start:start + batch_size]
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        for start in range(0, len(indices), batch_size):
+            batch_idx = indices[start:start + batch_size]
 
-        clips, exp_names = zip(*(dataset[i] for i in batch_idx))
+            samples = list(executor.map(dataset.__getitem__, batch_idx))
 
-        clips = np.asarray(np.stack(clips))
-        exp_names = list(exp_names)
+            clips, exp_names = zip(*samples)
 
-        if exp_name:
-            yield clips, exp_names
-        else:
-            yield clips
+            clips = np.stack(clips)
+            exp_names = list(exp_names)
+
+            if exp_name:
+                yield clips, exp_names
+            else:
+                yield clips
+
+
+def prefetch(generator, buffer_size):
+    queue = Queue(maxsize=buffer_size)
+
+    def worker():
+        for item in generator:
+            queue.put(item)
+        queue.put(None)
+
+    Thread(target=worker, daemon=True).start()
+
+    while True:
+        item = queue.get()
+        if item is None:
+            break
+        yield item
 
 
 def prepare_rvm_src_tgt_pairs(

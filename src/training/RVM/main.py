@@ -12,7 +12,7 @@ import json
 
 from utils.model import get_rvm
 from utils.logging import get_exp_name, setup_wandb
-from utils.dataloader import create_train_test_datasets, TransformPipeline, prepare_rvm_src_tgt_pairs, batch_iterator
+from utils.dataloader import create_train_test_datasets, TransformPipeline, prepare_rvm_src_tgt_pairs, batch_iterator, prefetch
 from utils.evaluation import full_evaluation
 from utils.loss import update_model
 
@@ -222,7 +222,11 @@ def main(_):
         params, opt_state, step = load_checkpoint(checkpointer, FLAGS.checkpoint_path)
 
     while step < FLAGS.steps + 1:
-        for clips in tqdm(batch_iterator(train_dataset, FLAGS.batch_size)):
+        loader = prefetch(
+            batch_iterator(train_dataset, batch_size=FLAGS.batch_size),
+            buffer_size=2
+        )
+        for clips in tqdm(loader, desc='Training epoch'):
             metrics = {}
 
             src, tgt, offsets = prepare_rvm_src_tgt_pairs(
