@@ -266,17 +266,35 @@ def create_train_test_datasets(
     return train_dataset, test_dataset
 
 
-def batch_iterator(dataset, batch_size, shuffle=True, exp_name=False, max_workers=64):
+def batch_iterator(
+    dataset,
+    batch_size,
+    shuffle=True,
+    exp_name=False,
+    max_workers=64,
+    prefetch_buffer_size=128,
+):
     indices = np.arange(len(dataset))
 
     if shuffle:
         np.random.shuffle(indices)
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        for start in range(0, len(indices), batch_size):
-            batch_idx = indices[start:start + batch_size]
+    queue = Queue(maxsize=prefetch_buffer_size)
 
-            samples = list(executor.map(dataset.__getitem__, batch_idx))
+    def worker(idx):
+        queue.put(dataset[idx])
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Launch one task per sample
+        futures = [executor.submit(worker, idx) for idx in indices]
+
+        remaining = len(indices)
+
+        while remaining > 0:
+            n = min(batch_size, remaining)
+
+            samples = [queue.get() for _ in range(n)]
+            remaining -= n
 
             clips, exp_names = zip(*samples)
 
@@ -288,22 +306,9 @@ def batch_iterator(dataset, batch_size, shuffle=True, exp_name=False, max_worker
             else:
                 yield clips
 
-
-def prefetch(generator, buffer_size):
-    queue = Queue(maxsize=buffer_size)
-
-    def worker():
-        for item in generator:
-            queue.put(item)
-        queue.put(None)
-
-    Thread(target=worker, daemon=True).start()
-
-    while True:
-        item = queue.get()
-        if item is None:
-            break
-        yield item
+        # Ensure exceptions from workers are propagated
+        for f in futures:
+            f.result()
 
 
 def prepare_rvm_src_tgt_pairs(

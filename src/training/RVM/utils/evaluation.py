@@ -10,7 +10,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import StratifiedKFold, cross_val_score
 import matplotlib.pyplot as plt
 
-from utils.dataloader import batch_iterator, prepare_rvm_src_tgt_pairs, prefetch
+from utils.dataloader import batch_iterator, prepare_rvm_src_tgt_pairs
 
 
 def compute_outputs(
@@ -52,10 +52,7 @@ def compute_outputs(
     features = []
     targets = []
     all_exp_names = []
-    loader = prefetch(
-        batch_iterator(test_dataset, batch_size=batch_size, exp_name=True),
-        buffer_size=2
-    )
+    loader = batch_iterator(test_dataset, batch_size=batch_size, exp_name=True)
     for clips, exp_names in tqdm(loader, desc='Evaluation'):
         src, tgt, offsets = prepare_rvm_src_tgt_pairs(
             clips, src_frames, tgt_frames, src_sample_prefix, min_offset, max_offset
