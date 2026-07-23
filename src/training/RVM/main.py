@@ -12,7 +12,7 @@ import json
 
 from utils.model import get_rvm
 from utils.logging import get_exp_name, setup_wandb
-from utils.dataloader import create_train_test_datasets, TransformPipeline, prepare_rvm_src_tgt_pairs, batch_iterator
+from utils.dataloader import create_train_val_datasets, TransformPipeline, prepare_rvm_src_tgt_pairs, batch_iterator
 from utils.evaluation import full_evaluation
 from utils.loss import update_model
 
@@ -33,12 +33,10 @@ flags.DEFINE_string('save_dir', 'checkpoints',
 flags.DEFINE_float('learning_rate', 1e-4, 'Learning rate for the optimizer.')
 flags.DEFINE_integer('batch_size', 16,
                      'Batch size for training and evaluation.')
-flags.DEFINE_float('train_split', 0.5,
-                   'Proportion of data to use for training (rest is for validation).')
 flags.DEFINE_integer('clip_size', 256, 'Height and width of input images.')
 flags.DEFINE_integer('clip_frames', 64, 'Number of frames in each video clip.')
-flags.DEFINE_integer('acq_freq', 30,
-                     'Acquisition frequency (in minutes) for sampling video clips.')
+flags.DEFINE_float('acq_freq', 15.0,
+                   'Acquisition frequency (in minutes) for sampling video clips.')
 flags.DEFINE_string('channel_names', 'Ch_ERK-KTR',
                     'Space-separated list of channel names to use from the videos.')
 
@@ -153,8 +151,7 @@ def main(_):
         per_frame_butterworth=FLAGS.per_frame_butterworth,
     )
 
-    train_dataset, test_dataset = create_train_test_datasets(
-        test_fraction=1 - FLAGS.train_split,
+    train_dataset, val_dataset = create_train_val_datasets(
         zarr_path=FLAGS.dataset_path,
         clip_frames=FLAGS.clip_frames,
         clip_size=FLAGS.clip_size,
@@ -183,7 +180,7 @@ def main(_):
         eval_key, rng_key = jax.random.split(rng_key)
         eval_metrics = full_evaluation(
             model,
-            test_dataset,
+            val_dataset,
             params,
             FLAGS.src_frames,
             FLAGS.tgt_frames,
@@ -250,7 +247,7 @@ def main(_):
                 eval_key, rng_key = jax.random.split(rng_key)
                 eval_metrics = full_evaluation(
                     model,
-                    test_dataset,
+                    val_dataset,
                     params,
                     FLAGS.src_frames,
                     FLAGS.tgt_frames,

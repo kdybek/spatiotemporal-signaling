@@ -99,33 +99,47 @@ def throw_out_frames(video, metadata, acq_freq):
 def create_zarr_dataset(
         items,
         out_path,
-        acq_freq
+        acq_freq,
+        train_fraction,
+        seed
 ):
+    items = list(items)
+
+    rng = np.random.default_rng(seed)
+    perm = rng.permutation(len(items))
+
+    split_idx = int(len(items) * train_fraction)
+    train_items = [items[i] for i in perm[:split_idx]]
+    val_items = [items[i] for i in perm[split_idx:]]
+
     root = zarr.open(out_path, mode='w')
 
     compressors = zarr.codecs.BloscCodec(
         cname='zstd', clevel=3, shuffle=zarr.codecs.BloscShuffle.bitshuffle)
 
-    idx = 0
-    for item in tqdm(items):
-        meta = item["Metadata"]
+    for split_name, split_items in [("train", train_items), ("val", val_items)]:
+        group = root.create_group(split_name)
 
-        try:
-            video = extract_video(item)
-            video, meta = throw_out_frames(video, meta, acq_freq)
-        except Exception as e:
-            logging.warning(f"Skipping item {idx} due to error: {e}")
-            continue
+        idx = 0
+        for item in tqdm(split_items, desc=f"Writing {split_name}"):
+            meta = item["Metadata"]
 
-        arr = root.create_array(
-            name=f"{idx}",
-            data=video,
-            chunks=(64, 1, 256, 256),
-            compressors=compressors,
-        )
-        idx += 1
+            try:
+                video = extract_video(item)
+                video, meta = throw_out_frames(video, meta, acq_freq)
+            except Exception as e:
+                logging.warning(f"Skipping {split_name} item {idx} due to error: {e}")
+                continue
 
-        arr.attrs["Metadata"] = meta
+            arr = group.create_array(
+                name=str(idx),
+                data=video,
+                chunks=(64, 1, 256, 256),
+                compressors=compressors,
+            )
+
+            arr.attrs["Metadata"] = meta
+            idx += 1
 
 
 def main():
@@ -154,8 +168,15 @@ def main():
     parser.add_argument(
         "--acq_freq",
         type=float,
-        default=30.0,
-        help="Target acquisition frequency in minutes (default: 30.0)"
+        default=15.0,
+        help="Target acquisition frequency in minutes (default: 15.0)"
+    )
+
+    parser.add_argument(
+        "--train_fraction",
+        type=float,
+        default=0.8,
+        help="Fraction of data to use for training (default: 0.8)"
     )
 
     parser.add_argument(
@@ -173,8 +194,6 @@ def main():
         format="%(asctime)s - %(levelname)s - %(message)s"
     )
 
-    np.random.seed(args.seed)
-
     try:
         items = load_pkl(args.input)
     except Exception as e:
@@ -183,7 +202,7 @@ def main():
 
     logging.info(f"Loaded {len(items)} items from PKL.")
 
-    create_zarr_dataset(items, args.output, args.acq_freq)
+    create_zarr_dataset(items, args.output, args.acq_freq, args.train_fraction, args.seed)
 
     logging.info(f"Zarr dataset created at {args.output}")
 

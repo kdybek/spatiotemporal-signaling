@@ -1,13 +1,11 @@
 import zarr
 import numpy as np
 import jax.numpy as jnp
-import random
 from skimage.filters import butterworth
 import math
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
-from threading import Thread
 
 
 DATASET_T_CHUNK = 64
@@ -198,8 +196,7 @@ class ZarrVideoDataset():
         return video, exp_name
 
 
-def create_train_test_datasets(
-    test_fraction,
+def create_train_val_datasets(
     zarr_path,
     clip_frames,
     clip_size,
@@ -207,40 +204,39 @@ def create_train_test_datasets(
     channel_names_list,
     transform_pipeline,
 ):
-    assert 0 < test_fraction < 1, "test_fraction must be between 0 and 1"
-
     root = zarr.open(zarr_path, mode="r")
-    video_names = []
-    for video_name in root:
-        try:
-            get_clip(
-                root,
-                video_name,
-                clip_frames,
-                clip_size,
-                acq_freq,
-                channel_names_list,
-                random_crop=False,
-                validation=True,
-            )
-        except Exception as e:
-            print(f"Skipping video {video_name} due to error: {e}")
-            continue
+    train_root = root["train"]
+    val_root = root["val"]
 
-        video_names.append(video_name)
+    def get_valid_video_names(zarr_group):
+        valid_video_names = []
+        for video_name in zarr_group:
+            try:
+                get_clip(
+                    zarr_group,
+                    video_name,
+                    clip_frames,
+                    clip_size,
+                    acq_freq,
+                    channel_names_list,
+                    random_crop=False,
+                    validation=True,
+                )
+            except Exception as e:
+                print(f"Skipping video {video_name} due to error: {e}")
+                continue
 
-    print(f"Found {len(video_names)} viable videos out of {len(root)} total videos.")
+            valid_video_names.append(video_name)
+        return valid_video_names
 
-    random.shuffle(video_names)
-    test_split = int(test_fraction * len(video_names))
-    test_video_names = video_names[:test_split]
-    train_video_names = video_names[test_split:]
+    train_video_names = get_valid_video_names(train_root)
+    val_video_names = get_valid_video_names(val_root)
 
     print(f"Using {len(train_video_names)} videos for training and {
-          len(test_video_names)} videos for testing.")
+          len(val_video_names)} videos for testing.")
 
     train_dataset = ZarrVideoDataset(
-        root,
+        train_root,
         train_video_names,
         clip_frames,
         clip_size,
@@ -251,9 +247,9 @@ def create_train_test_datasets(
         random_crop=True,
     )
 
-    test_dataset = ZarrVideoDataset(
-        root,
-        test_video_names,
+    val_dataset = ZarrVideoDataset(
+        val_root,
+        val_video_names,
         clip_frames,
         clip_size,
         acq_freq,
@@ -263,7 +259,7 @@ def create_train_test_datasets(
         random_crop=False,
     )
 
-    return train_dataset, test_dataset
+    return train_dataset, val_dataset
 
 
 def batch_iterator(
