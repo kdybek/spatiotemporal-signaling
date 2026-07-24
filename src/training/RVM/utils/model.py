@@ -443,6 +443,7 @@ class VideoSiamMAE(nn.Module):
     detokenizer: nn.Module | None = None
     decoder_emb_dim: int = 512
     masking_ratio: float = 0.95
+    residual_latent_decomposition: bool = False
 
     def setup(self):
         self.cls_token = self.param('cls_token', nn.initializers.normal(
@@ -529,7 +530,8 @@ class VideoSiamMAE(nn.Module):
             encoded, state = self.rnn_core(
                 encoded_source_tokens[..., t, :, :], state)
             all_encoded_source_tokens.append(encoded)
-        encoded_source_tokens = jnp.stack(all_encoded_source_tokens, axis=-3)
+        all_features = jnp.stack(all_encoded_source_tokens, axis=-3)
+        encoded_source_tokens = all_features[..., -1, :, :]
 
         # Encode target frames
         num_target_tokens = target_with_cls.shape[-2]
@@ -590,10 +592,7 @@ class VideoSiamMAE(nn.Module):
         to_decode = jnp.concatenate([target_cls, unshuffled_tokens], axis=-2)
 
         # Prepare KV from encoded source tokens
-        inputs_kv = einops.rearrange(
-            encoded_source_tokens, '... T N D -> ... (T N) D'
-        )
-        inputs_kv = self.decoder_embedder(inputs_kv)
+        inputs_kv = self.decoder_embedder(encoded_source_tokens)
         inputs_kv = inputs_kv[..., jnp.newaxis, :, :]
         inputs_kv = jnp.tile(inputs_kv, [num_target_frames, 1, 1])
 
@@ -620,7 +619,7 @@ class VideoSiamMAE(nn.Module):
         return {
             'reconstructed': reconstructed,
             'mask': mask,
-            'features': encoded_source_tokens,
+            'features': all_features,
             'state': state,
         }
 

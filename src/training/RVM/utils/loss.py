@@ -28,6 +28,7 @@ def update_model(
         mask = jax.image.resize(
             mask, targets.shape[:-1] + (1,), method='nearest'
         )
+        mask = jnp.repeat(mask, targets.shape[-1], axis=-1)
 
         error = (reconstructed - targets) ** 2
         mse_loss = jnp.sum(mask * error) / (jnp.sum(mask) + 1e-8)

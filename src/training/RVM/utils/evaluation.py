@@ -41,7 +41,7 @@ def compute_outputs(
             targets.shape[:-1] + (1,),
             method="nearest",
         )
-        features = jnp.mean(output["features"], axis=1)  # Temporal averaging
+        features = output["features"][..., -1, :, :]  # Discard intermediates
 
         output["mask"] = mask
         output["features"] = features
