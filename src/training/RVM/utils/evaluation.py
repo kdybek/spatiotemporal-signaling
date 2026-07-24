@@ -41,6 +41,7 @@ def compute_outputs(
             targets.shape[:-1] + (1,),
             method="nearest",
         )
+        mask = jnp.repeat(mask, targets.shape[-1], axis=-1)  # Repeat mask for each channel
         features = output["features"][..., -1, :, :]  # Discard intermediates
 
         output["mask"] = mask
