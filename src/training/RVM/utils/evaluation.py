@@ -1,5 +1,6 @@
 from tqdm import tqdm
 import jax
+import jax.numpy as jnp
 import numpy as np
 import wandb
 from sklearn.manifold import TSNE
@@ -40,7 +41,7 @@ def compute_outputs(
             targets.shape[:-1] + (1,),
             method="nearest",
         )
-        features = output["features"][:, -1, ...]  # Discard intermediates
+        features = jnp.mean(output["features"], axis=1)  # Temporal averaging
 
         output["mask"] = mask
         output["features"] = features
