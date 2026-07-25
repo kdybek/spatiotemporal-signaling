@@ -148,6 +148,10 @@ VIT_SIZES = {
     'g': (1408, 40, 6144, 16),
     'G': (1664, 48, 8192, 16),
     'e': (1792, 56, 15360, 16),
+    'S_temp': (384, 4, 1536, 6),
+    'M_temp': (512, 4, 2048, 8),
+    'B_temp': (768, 4, 3072, 12),
+    'L_temp': (1024, 8, 4096, 16),
 }
 
 
@@ -480,18 +484,19 @@ class MoCoMAE(nn.Module):
     latent_emb_dim: int
 
     # Decoder
-    decoder: nn.Module | None = None
-    decoder_embedder: nn.Module | None = None
-    delta_embedder: nn.Module | None = None
-    latent_posenc: nn.Module | None = None
-    detokenizer: nn.Module | None = None
-    decoder_emb_dim: int = 512
-    masking_ratio: float = 0.95
-    latent_decomposition: str = 'residual'  # 'residual' or 'concat'
+    decoder: nn.Module
+    decoder_embedder: nn.Module
+    delta_embedder: nn.Module
+    latent_posenc: nn.Module
+    detokenizer: nn.Module
+    decoder_emb_dim: int
+    masking_ratio: float
+    latent_decomposition: str  # 'residual' or 'concat'
 
     def setup(self):
         assert self.latent_decomposition in ['residual', 'concat'], (
-            f'Invalid latent_decomposition: {self.latent_decomposition}. Must be "residual" or "concat".'
+            f'Invalid latent_decomposition: {
+                self.latent_decomposition}. Must be "residual" or "concat".'
         )
 
         self.motion_token = self.param('motion_token', nn.initializers.normal(
@@ -511,20 +516,19 @@ class MoCoMAE(nn.Module):
         """Full forward pass with encoder + decoder for masked reconstruction.
 
         Args:
-          source_frames: Source (context) frames, shape (B, T, H, W, 3).
-          target_frames: Target frames to reconstruct, shape (B, TT, H, W, 3).
+          source_frames: Source (context) frames, shape (B, T, H, W, C).
+          target_frames: Target frames to reconstruct, shape (B, TT, H, W, C).
           target_deltas: Optional temporal deltas, shape (B, TT), integer.
           rng_key: JAX random key for masking.
 
         Returns:
           A dictionary containing:
-            - 'reconstructed': Reconstructed target frames, shape (B, TT, H, W, 3).
+            - 'reconstructed': Reconstructed target frames, shape (B, TT, H, W, C).
             - 'mask': Binary mask indicating which tokens were masked, shape (B, TT, h, w, 1).
             - 'features': Latent features from the encoder, shape (B, N, D).
-            - 'content_latents': Content latents from the encoder, shape (B, N, D).
-            - 'motion_latents': Motion latents from the encoder, shape (B, N, D).
+            - 'content_features': Content latent features from the encoder, shape (B, N, D).
+            - 'motion_features': Motion latent features from the encoder, shape (B, N, D).
         """
-        assert self.decoder is not None, 'Decoder must be provided for reconstruction.'
         if rng_key is None:
             rng_key = self.make_rng('default')
 
@@ -544,9 +548,11 @@ class MoCoMAE(nn.Module):
         encoded_source_tokens = self.spatial_encoder(source_tokens)
 
         # Pool content latents from encoded source tokens
-        patch_tokens = einops.rearrange(encoded_source_tokens, '(B T) N D -> (B N) T D', B=B, T=num_source_frames)
+        patch_tokens = einops.rearrange(
+            encoded_source_tokens, '(B T) N D -> (B N) T D', B=B, T=num_source_frames)
         content_latents = self.content_pooler(patch_tokens)
-        content_latents = einops.rearrange(content_latents, '(B N) D -> B N D', B=B, N=N)
+        content_latents = einops.rearrange(
+            content_latents, '(B N) D -> B N D', B=B, N=N)
 
         # Add temporal positional encoding to patch tokens
         temporal_posenc = self.temporal_posenc(patch_tokens.shape)
@@ -597,7 +603,8 @@ class MoCoMAE(nn.Module):
                 self.mask_token.shape[-1],
             ],
         )
-        shuffled_tokens = jnp.concatenate([embedded_target_tokens, mask_tokens], axis=-2)
+        shuffled_tokens = jnp.concatenate(
+            [embedded_target_tokens, mask_tokens], axis=-2)
         unshuffled_tokens = jnp.take_along_axis(
             shuffled_tokens, inds_restore, axis=-2
         )
@@ -657,46 +664,48 @@ class MoCoMAE(nn.Module):
             'reconstructed': reconstructed,
             'mask': mask,
             'features': latents,
-            'content_latents': content_latents,
-            'motion_latents': motion_latents,
+            'content_features': content_latents,
+            'motion_features': motion_latents,
         }
 
 
-def get_mocomae(num_channels, masking_ratio, variant='B'):
+def get_mocomae(num_channels, masking_ratio, variant, latent_decomposition):
     if variant == 'L':
-        encoder_variant = 'L'
+        spatial_encoder_variant = 'L'
+        temporal_encoder_variant = 'L_temp'
         embed_dim = 1024
-        rnn_heads = 16
+        content_pooler_heads = 12
     elif variant == 'B':
-        encoder_variant = 'B'
+        spatial_encoder_variant = 'B'
+        temporal_encoder_variant = 'B_temp'
         embed_dim = 768
-        rnn_heads = 12
+        content_pooler_heads = 8
+    elif variant == 'M':
+        spatial_encoder_variant = 'M'
+        temporal_encoder_variant = 'M_temp'
+        embed_dim = 512
+        content_pooler_heads = 8
     elif variant == 'S':
-        encoder_variant = 'S'
+        spatial_encoder_variant = 'S'
+        temporal_encoder_variant = 'S_temp'
         embed_dim = 384
-        rnn_heads = 8
+        content_pooler_heads = 4
     else:
         raise ValueError(f'Unknown variant: {variant}')
 
     return MoCoMAE(
         tokenizer=Tokenizer(
-            patch_embedding=PatchEmbedding(patch_size=[1, 16, 16], num_features=embed_dim),
-            posenc=SincosPosEmb(base_token_shape=[16, 16]),
+            patch_embedding=PatchEmbedding(
+                patch_size=[1, 16, 16], num_features=embed_dim),
+            posenc=SincosPosEmb(),
         ),
-        encoder=Transformer.from_variant_str(
-            variant_str=encoder_variant, dtype=jax.numpy.bfloat16),
-        rnn_core=GatedTransformerCore(
-            transformer=CrossAttentionTransformer(
-                num_layers=4,
-                num_heads=rnn_heads,
-                num_feats=embed_dim,
-                mlp_dim=4 * embed_dim,
-                dtype=jax.numpy.bfloat16,
-            ),
-            initializer=RandomStateInit(),
-            token_dim=embed_dim,
-            state_layer_norm=nn.LayerNorm(epsilon=0.0001, use_scale=True, use_bias=False),
-        ),
+        spatial_encoder=Transformer.from_variant_str(
+            variant_str=spatial_encoder_variant, dtype=jax.numpy.bfloat16),
+        temporal_encoder=Transformer.from_variant_str(
+            variant_str=temporal_encoder_variant, dtype=jax.numpy.bfloat16),
+        content_pooler=AttentionPooler(
+            num_heads=content_pooler_heads, num_feats=embed_dim),
+        temporal_posenc=SincosPosEmb1D(),
         latent_emb_dim=embed_dim,
         # Decoder components
         decoder=CrossAttentionTransformer(
@@ -712,4 +721,5 @@ def get_mocomae(num_channels, masking_ratio, variant='B'):
         detokenizer=Detokenizer(patch_size=(16, 16), num_features=num_channels),
         decoder_emb_dim=512,
         masking_ratio=masking_ratio,
+        latent_decomposition=latent_decomposition
     )

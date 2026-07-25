@@ -12,7 +12,7 @@ import json
 
 from utils.model import get_mocomae
 from utils.logging import get_exp_name, setup_wandb
-from utils.dataloader import create_train_val_datasets, TransformPipeline, prepare_rvm_src_tgt_pairs, batch_iterator
+from utils.dataloader import create_train_val_datasets, TransformPipeline, prepare_src_tgt_pairs, batch_iterator
 from utils.evaluation import full_evaluation
 from utils.loss import update_model
 
@@ -40,7 +40,7 @@ flags.DEFINE_float('acq_freq', 15.0,
 flags.DEFINE_string('channel_names', 'Ch_ERK-KTR',
                     'Space-separated list of channel names to use from the videos.')
 
-flags.DEFINE_integer('src_frames', 4, 'Number of source frames for reconstruction.')
+flags.DEFINE_integer('src_frames', 16, 'Number of source frames for reconstruction.')
 flags.DEFINE_integer('tgt_frames', 4, 'Number of target frames for reconstruction.')
 flags.DEFINE_integer('src_sample_prefix', 16,
                      'Clip prefix length for source frames sampling.')
@@ -50,7 +50,8 @@ flags.DEFINE_integer('max_offset', 48,
                      'Maximum offset between source and target frames.')
 flags.DEFINE_float('masking_ratio', 0.95,
                    'Ratio of target tokens to mask during training.')
-flags.DEFINE_string('rvm_variant', 'B', 'Variant of the RVM to use.')
+flags.DEFINE_string('mocomae_variant', 'B', 'Variant of the MoCoMAE to use.')
+flags.DEFINE_string('latent_decomposition', 'residual', 'Latent decomposition method to use. Supported: residual, concat.')
 
 flags.DEFINE_string('transforms', 'arcsinh butterworth percentile_norm',
                     'Space-separated list of transforms to apply to the videos. Supported: percentile_norm, arcsinh, log1p, butterworth.')
@@ -163,7 +164,8 @@ def main(_):
     model = get_mocomae(
         num_channels=len(FLAGS.channel_names.split()),
         masking_ratio=FLAGS.masking_ratio,
-        variant=FLAGS.rvm_variant,
+        variant=FLAGS.mocomae_variant,
+        latent_decomposition=FLAGS.latent_decomposition
     )
 
     init_key, rng_key = jax.random.split(rng_key)
@@ -223,7 +225,7 @@ def main(_):
         for clips in tqdm(loader, desc='Training epoch'):
             metrics = {}
 
-            src, tgt, offsets = prepare_rvm_src_tgt_pairs(
+            src, tgt, offsets = prepare_src_tgt_pairs(
                 clips,
                 FLAGS.src_frames,
                 FLAGS.tgt_frames,

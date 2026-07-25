@@ -307,7 +307,7 @@ def batch_iterator(
             f.result()
 
 
-def prepare_rvm_src_tgt_pairs(
+def prepare_src_tgt_pairs(
         clip_batch,
         src_frames,
         tgt_frames,
