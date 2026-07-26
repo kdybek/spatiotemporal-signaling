@@ -244,29 +244,6 @@ class Transformer(nn.Module):
         )
 
 
-class GatedTransformerCore(nn.Module):
-    transformer: nn.Module
-    initializer: nn.Module
-    token_dim: int
-    state_layer_norm: nn.Module
-
-    def setup(self):
-        self.input_update = nn.Dense(self.token_dim, use_bias=False)
-        self.input_reset = nn.Dense(self.token_dim, use_bias=False)
-        self.state_update = nn.Dense(self.token_dim, use_bias=False)
-        self.state_reset = nn.Dense(self.token_dim, use_bias=False)
-
-    def __call__(self, inputs, state):
-        update_gate = jax.nn.sigmoid(
-            self.input_update(inputs) + self.state_update(state))
-        reset_gate = jax.nn.sigmoid(self.input_reset(inputs) + self.state_reset(state))
-        h = self.transformer(inputs, inputs_kv=reset_gate *
-                             self.state_layer_norm(state))
-        output = (1-update_gate)*state + update_gate * h
-        state = output
-        return output, state
-
-
 def softmax(x):
     return jax.nn.softmax(x.astype(jnp.float32), axis=-1).astype(jnp.float32)
 
@@ -389,17 +366,6 @@ class CrossAttentionBlock(nn.Module):
         return x
 
 
-class RandomStateInit(nn.Module):
-    """Random, non-learnable state initialization."""
-
-    @nn.compact
-    def __call__(self, inputs, batch_shape):
-        shape = inputs.shape[-2:]
-        state = 0 * jax.random.normal(key=self.make_rng("default"),
-                                      shape=batch_shape + shape)
-        return state
-
-
 class Detokenizer(nn.Module):
     """Detokenize tokens to pixel-space patches via a learned linear projection."""
     patch_size: tuple[int, int]
@@ -478,7 +444,6 @@ class MoCoMAE(nn.Module):
     # Encoder
     tokenizer: nn.Module
     spatial_encoder: nn.Module
-    content_pooler: nn.Module
     temporal_encoder: nn.Module
     temporal_posenc: nn.Module
     latent_emb_dim: int
@@ -491,6 +456,7 @@ class MoCoMAE(nn.Module):
     detokenizer: nn.Module
     decoder_emb_dim: int
     masking_ratio: float
+    content_pooling: str  # 'mean' or 'random'
     latent_decomposition: str  # 'residual' or 'concat'
 
     def setup(self):
@@ -534,7 +500,9 @@ class MoCoMAE(nn.Module):
 
         # Tokenize source and target frames
         source_tokens = self.tokenizer(source_frames)
-        _, num_source_frames, source_tokens_h, source_tokens_w, source_tokens_d = source_tokens.shape
+        _, num_source_frames, source_tokens_h, source_tokens_w, source_tokens_d = (
+            source_tokens.shape
+        )
         target_tokens = self.tokenizer(target_frames)
         B, num_target_frames, target_tokens_h, target_tokens_w, target_tokens_d = (
             target_tokens.shape
@@ -549,10 +517,23 @@ class MoCoMAE(nn.Module):
 
         # Pool content latents from encoded source tokens
         patch_tokens = einops.rearrange(
-            encoded_source_tokens, '(B T) N D -> (B N) T D', B=B, T=num_source_frames)
-        content_latents = self.content_pooler(patch_tokens)
-        content_latents = einops.rearrange(
-            content_latents, '(B N) D -> B N D', B=B, N=N)
+            encoded_source_tokens, '(B T) N D -> B N T D', B=B, T=num_source_frames)
+
+        if self.content_pooling == 'mean':
+            content_latents = jnp.mean(patch_tokens, axis=-2)
+        elif self.content_pooling == 'random':
+            rng_key, subkey = jax.random.split(rng_key)
+            rand_idx = jax.random.randint(
+                subkey, shape=(B,), minval=0, maxval=num_source_frames)
+            content_latents = jnp.take_along_axis(
+                patch_tokens,
+                rand_idx[..., jnp.newaxis, jnp.newaxis, jnp.newaxis],
+                axis=-2
+            )
+            content_latents = jnp.squeeze(content_latents, axis=-2)
+        else:
+            raise ValueError(f'Invalid content_pooling: {
+                             self.content_pooling}. Must be "mean" or "random".')
 
         # Add temporal positional encoding to patch tokens
         temporal_posenc = self.temporal_posenc(patch_tokens.shape)
@@ -561,12 +542,11 @@ class MoCoMAE(nn.Module):
         # Add motion token and encode through temporal encoder
         motion_token_t = jnp.broadcast_to(
             self.motion_token,
-            (B * N, 1, self.motion_token.shape[-1])
+            (B, N, 1, self.motion_token.shape[-1])
         )
         motion_inputs = jnp.concatenate([motion_token_t, patch_tokens], axis=-2)
         motion_latents = self.temporal_encoder(motion_inputs)
         motion_latents = motion_latents[..., 0, :]
-        motion_latents = einops.rearrange(motion_latents, '(B N) D -> B N D', B=B, N=N)
 
         if self.latent_decomposition == 'residual':
             latents = content_latents + motion_latents
@@ -669,27 +649,23 @@ class MoCoMAE(nn.Module):
         }
 
 
-def get_mocomae(num_channels, masking_ratio, variant, latent_decomposition):
+def get_mocomae(num_channels, masking_ratio, variant, content_pooling, latent_decomposition):
     if variant == 'L':
         spatial_encoder_variant = 'L'
         temporal_encoder_variant = 'L_temp'
         embed_dim = 1024
-        content_pooler_heads = 12
     elif variant == 'B':
         spatial_encoder_variant = 'B'
         temporal_encoder_variant = 'B_temp'
         embed_dim = 768
-        content_pooler_heads = 8
     elif variant == 'M':
         spatial_encoder_variant = 'M'
         temporal_encoder_variant = 'M_temp'
         embed_dim = 512
-        content_pooler_heads = 8
     elif variant == 'S':
         spatial_encoder_variant = 'S'
         temporal_encoder_variant = 'S_temp'
         embed_dim = 384
-        content_pooler_heads = 4
     else:
         raise ValueError(f'Unknown variant: {variant}')
 
@@ -703,8 +679,6 @@ def get_mocomae(num_channels, masking_ratio, variant, latent_decomposition):
             variant_str=spatial_encoder_variant, dtype=jax.numpy.bfloat16),
         temporal_encoder=Transformer.from_variant_str(
             variant_str=temporal_encoder_variant, dtype=jax.numpy.bfloat16),
-        content_pooler=AttentionPooler(
-            num_heads=content_pooler_heads, num_feats=embed_dim),
         temporal_posenc=SincosPosEmb1D(),
         latent_emb_dim=embed_dim,
         # Decoder components
@@ -721,5 +695,6 @@ def get_mocomae(num_channels, masking_ratio, variant, latent_decomposition):
         detokenizer=Detokenizer(patch_size=(16, 16), num_features=num_channels),
         decoder_emb_dim=512,
         masking_ratio=masking_ratio,
+        content_pooling=content_pooling,
         latent_decomposition=latent_decomposition
     )

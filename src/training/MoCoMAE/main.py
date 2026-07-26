@@ -51,6 +51,7 @@ flags.DEFINE_integer('max_offset', 48,
 flags.DEFINE_float('masking_ratio', 0.95,
                    'Ratio of target tokens to mask during training.')
 flags.DEFINE_string('mocomae_variant', 'B', 'Variant of the MoCoMAE to use.')
+flags.DEFINE_string('content_pooling', 'random', 'Content pooling method to use. Supported: mean, random.')
 flags.DEFINE_string('latent_decomposition', 'residual', 'Latent decomposition method to use. Supported: residual, concat.')
 
 flags.DEFINE_string('transforms', 'arcsinh butterworth percentile_norm',
@@ -165,6 +166,7 @@ def main(_):
         num_channels=len(FLAGS.channel_names.split()),
         masking_ratio=FLAGS.masking_ratio,
         variant=FLAGS.mocomae_variant,
+        content_pooling=FLAGS.content_pooling,
         latent_decomposition=FLAGS.latent_decomposition
     )
 

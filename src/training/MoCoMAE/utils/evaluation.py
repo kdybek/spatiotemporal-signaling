@@ -14,6 +14,56 @@ import matplotlib.pyplot as plt
 from utils.dataloader import batch_iterator, prepare_src_tgt_pairs
 
 
+EVAL_SUBFOLDER = "evaluation"
+RECONSTRUCTION_SUBFOLDER = "reconstruction"
+DIM_RED_SUBFOLDER = "dimensionality_reduction"
+
+
+def rbf_kernel(x, sigma=1.0):
+    """
+    Compute RBF (Gaussian) kernel matrix.
+
+    Args:
+        x: (n, d) feature matrix
+        sigma: RBF bandwidth
+
+    Returns:
+        K: (n, n) kernel matrix
+    """
+    sq_norms = np.sum(x ** 2, axis=1, keepdims=True)
+    pairwise_sq_dists = sq_norms + sq_norms.T - 2 * (x @ x.T)
+
+    K = np.exp(-pairwise_sq_dists / (2 * sigma ** 2))
+    return K
+
+
+def hsic_rbf(x, y, sigma_x=1.0, sigma_y=1.0):
+    """
+    Compute empirical HSIC with RBF kernels.
+
+    Args:
+        x: (n, dx) feature matrix
+        y: (n, dy) feature matrix
+        sigma_x: RBF bandwidth for x
+        sigma_y: RBF bandwidth for y
+
+    Returns:
+        HSIC value
+    """
+    n = x.shape[0]
+
+    K = rbf_kernel(x, sigma_x)
+    L = rbf_kernel(y, sigma_y)
+
+    # Centering matrix
+    H = np.eye(n) - np.ones((n, n)) / n
+
+    # HSIC = tr(KHLH)/(n-1)^2
+    hsic = np.trace(K @ H @ L @ H) / ((n - 1) ** 2)
+
+    return hsic
+
+
 def compute_outputs(
     model,
     test_dataset,
@@ -41,17 +91,17 @@ def compute_outputs(
             targets.shape[:-1] + (1,),
             method="nearest",
         )
-        mask = jnp.repeat(mask, targets.shape[-1], axis=-1)  # Repeat mask for each channel
-        features = output["features"]
-
+        # Repeat mask for each channel
+        mask = jnp.repeat(mask, targets.shape[-1], axis=-1)
         output["mask"] = mask
-        output["features"] = features
 
         return output
 
     reconstruced = []
     masks = []
     features = []
+    content_features = []
+    motion_features = []
     targets = []
     all_exp_names = []
     loader = batch_iterator(test_dataset, batch_size=batch_size, exp_name=True)
@@ -67,17 +117,29 @@ def compute_outputs(
         reconstruced.extend(np.array(output["reconstructed"]))
         masks.extend(np.array(output["mask"]))
         features.extend(np.array(output["features"]))
+        content_features.extend(np.array(output["content_features"]))
+        motion_features.extend(np.array(output["motion_features"]))
         targets.extend(np.array(tgt))
 
     reconstruced = np.array(reconstruced)
     masks = np.array(masks)
     features = np.array(features)
+    content_features = np.array(content_features)
+    motion_features = np.array(motion_features)
     targets = np.array(targets)
 
-    return reconstruced, masks, features, targets, all_exp_names
+    return {
+        "reconstructed": reconstruced,
+        "masks": masks,
+        "features": features,
+        "content_features": content_features,
+        "motion_features": motion_features,
+        "targets": targets,
+        "exp_names": all_exp_names,
+    }
 
 
-def visualize_reconstruction(reconstructed, targets, masks, max_samples=8):
+def visualize_reconstructions(reconstructed, targets, masks, max_samples=8):
     reconstructed = np.clip(reconstructed, 0, 1)
     masked_view = targets * (1 - masks) + 0.5 * masks
     combined = targets * (1 - masks) + reconstructed * masks
@@ -91,7 +153,7 @@ def visualize_reconstruction(reconstructed, targets, masks, max_samples=8):
     C = target.shape[-1]
     for c in range(C):
         for i in range(min(max_samples, target.shape[0])):
-            metrics[f"evaluation/channel_{c}/image_set_{i}"] = [
+            metrics[f"{RECONSTRUCTION_SUBFOLDER}/channel_{c}/image_set_{i}"] = [
                 wandb.Image(target[i, 0, ..., c], caption="Target"),
                 wandb.Image(masked_view[i, 0, ..., c], caption="Masked View"),
                 wandb.Image(combined[i, 0, ..., c], caption="Reconstructed"),
@@ -100,10 +162,10 @@ def visualize_reconstruction(reconstructed, targets, masks, max_samples=8):
     return metrics
 
 
-def visualize_features(features, labels):
-    features = features[:, 1:, ...].mean(axis=1)  # Average over the spatial dimension
-    assert len(
-        labels) == features.shape[0], "Number of labels must match the number of feature vectors."
+def visualize_features(features, labels, feature_type):
+    features = jnp.mean(features, axis=1)  # Average over the spatial dimension
+    assert len(labels) == features.shape[0], \
+        "Number of labels must match the number of feature vectors."
 
     encoder = LabelEncoder()
     y = encoder.fit_transform(labels)
@@ -129,19 +191,17 @@ def visualize_features(features, labels):
 
     ax.set_title("t-SNE Embeddings")
 
-    return {"evaluation/tsne": wandb.Image(fig)}
+    return {f"{DIM_RED_SUBFOLDER}/tsne_{feature_type}_feat": wandb.Image(fig)}
 
 
-def evaluate_probing(features, labels, cv=5, random_state=42):
+def evaluate_probing(features, labels, feature_type, cv=5, random_state=42):
     assert len(labels) == features.shape[0], \
         "Number of labels must match the number of feature vectors."
 
     if len(features) < cv:
         return {}
 
-    features_cls = features[:, 0, ...]  # Use the cls token
-    features_mean = features[:, 1:, ...].mean(
-        axis=1)  # Average over the spatial dimension
+    features = jnp.mean(features, axis=1)  # Average over the spatial dimension
 
     clf = Pipeline([
         ("scaler", StandardScaler()),
@@ -154,26 +214,37 @@ def evaluate_probing(features, labels, cv=5, random_state=42):
         random_state=random_state
     )
 
-    scores_cls = cross_val_score(
+    scores = cross_val_score(
         clf,
-        features_cls,
-        labels,
-        cv=cv_split,
-        scoring="accuracy"
-    )
-    scores_mean = cross_val_score(
-        clf,
-        features_mean,
+        features,
         labels,
         cv=cv_split,
         scoring="accuracy"
     )
 
     return {
-        "evaluation/probing_mean_acc_cls": np.mean(scores_cls),
-        "evaluation/probing_mean_acc_mean": np.mean(scores_mean),
-        "evaluation/probing_std_acc_cls": np.std(scores_cls),
-        "evaluation/probing_std_acc_mean": np.std(scores_mean),
+        f"{EVAL_SUBFOLDER}/probing_mean_acc_{feature_type}_feat": np.mean(scores),
+        f"{EVAL_SUBFOLDER}/probing_std_acc_{feature_type}_feat": np.std(scores),
+    }
+
+
+def evaluate_hsic(features1, features2, comparison_type, sigma=1.0):
+    features1 = jnp.mean(features1, axis=1)  # Average over the spatial dimension
+    features2 = jnp.mean(features2, axis=1)  # Average over the spatial dimension
+
+    hsic_value = hsic_rbf(features1, features2, sigma_x=sigma, sigma_y=sigma)
+
+    return {
+        f"{EVAL_SUBFOLDER}/hsic_{comparison_type}": hsic_value,
+    }
+
+
+def evaluate_loss(reconstructed, targets, masks):
+    error = (reconstructed - targets) ** 2
+    mse_loss = np.sum(masks * error) / (np.sum(masks) + 1e-8)
+
+    return {
+        f"{EVAL_SUBFOLDER}/loss": mse_loss,
     }
 
 
@@ -189,7 +260,7 @@ def full_evaluation(
         batch_size,
         rng_key
 ):
-    reconstructed, masks, features, targets, exp_names = compute_outputs(
+    outputs = compute_outputs(
         model,
         test_dataset,
         params,
@@ -202,15 +273,24 @@ def full_evaluation(
         rng_key
     )
 
-    error = (reconstructed - targets) ** 2
-    mse_loss = np.sum(masks * error) / (np.sum(masks) + 1e-8)
+    reconstructed = outputs["reconstructed"]
+    masks = outputs["masks"]
+    features = outputs["features"]
+    content_features = outputs["content_features"]
+    motion_features = outputs["motion_features"]
+    targets = outputs["targets"]
+    exp_names = outputs["exp_names"]
 
-    metrics = {
-        "evaluation/loss": mse_loss,
-    }
+    metrics = {}
+    metrics.update(evaluate_loss(reconstructed, targets, masks))
+    metrics.update(visualize_reconstructions(reconstructed, targets, masks))
 
-    metrics.update(visualize_reconstruction(reconstructed, targets, masks))
-    metrics.update(visualize_features(features, exp_names))
-    metrics.update(evaluate_probing(features, exp_names))
+    feature_types = ["combined", "content", "motion"]
+    feature_sets = [features, content_features, motion_features]
+    for feature_type, feature_set in zip(feature_types, feature_sets, strict=True):
+        metrics.update(visualize_features(feature_set, exp_names, feature_type))
+        metrics.update(evaluate_probing(feature_set, exp_names, feature_type))
+
+    metrics.update(evaluate_hsic(content_features, motion_features, "content_vs_motion"))
 
     return metrics
