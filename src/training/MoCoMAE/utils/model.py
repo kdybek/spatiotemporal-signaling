@@ -167,20 +167,7 @@ class ViTSpec:
 
     @classmethod
     def from_variant_string(cls, variant_str: str):
-        """Parse variant strings like "ViT-L", "B", or "Ti/16"."""
-        r = re.match(
-            r'^([Vv][Ii][Tt][-_])?(?P<name>[a-zA-Z]{1,2})(/(?P<patch>\d+))?$',
-            variant_str,
-        )
-        if r is None:
-            raise ValueError(f'Invalid variant string: {variant_str!r}.')
-        name = r.groupdict()['name']
-        spec = cls(*VIT_SIZES[name])
-
-        patch_size = r.groupdict()['patch']
-        if patch_size is not None:
-            spec = dataclasses.replace(spec, patch_size=int(patch_size))
-        return spec
+        return cls(*VIT_SIZES[variant_str])
 
     @property
     def kwargs(self):
