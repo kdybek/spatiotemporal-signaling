@@ -42,7 +42,7 @@ def compute_outputs(
             method="nearest",
         )
         mask = jnp.repeat(mask, targets.shape[-1], axis=-1)  # Repeat mask for each channel
-        features = jnp.mean(output["features"], axis=1)  # Temporal averaging
+        features = jnp.mean(output["features"], axis=(1, 2))  # Spatio-temporal averaging
 
         output["mask"] = mask
         output["features"] = features
@@ -54,8 +54,10 @@ def compute_outputs(
     features = []
     targets = []
     all_exp_names = []
-    loader = batch_iterator(test_dataset, batch_size=batch_size, exp_name=True)
-    for clips, exp_names in tqdm(loader, desc='Evaluation'):
+    loader = batch_iterator(test_dataset, batch_size=batch_size, aux=True)
+    for batch in tqdm(loader, desc='Evaluation'):
+        clips = batch["clips"]
+        exp_names = batch["exp_names"]
         src, tgt, offsets = prepare_rvm_src_tgt_pairs(
             clips, src_frames, tgt_frames, src_sample_prefix, min_offset, max_offset
         )

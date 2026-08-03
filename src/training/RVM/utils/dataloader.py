@@ -192,8 +192,9 @@ class ZarrVideoDataset():
 
         path = self.root[video_name].attrs["Metadata"]["Path"]
         exp_name = Path(path).name
+        metadata = self.root[video_name].attrs["Metadata"]
 
-        return video, exp_name
+        return video, exp_name, metadata
 
 
 def create_train_val_datasets(
@@ -203,6 +204,10 @@ def create_train_val_datasets(
     acq_freq,
     channel_names_list,
     transform_pipeline,
+    augment_train=True,
+    augment_val=False,
+    random_crop_train=True,
+    random_crop_val=False
 ):
     root = zarr.open(zarr_path, mode="r")
     train_root = root["train"]
@@ -243,8 +248,8 @@ def create_train_val_datasets(
         acq_freq,
         channel_names_list,
         transform_pipeline,
-        augment=True,
-        random_crop=True,
+        augment=augment_train,
+        random_crop=random_crop_train,
     )
 
     val_dataset = ZarrVideoDataset(
@@ -255,8 +260,8 @@ def create_train_val_datasets(
         acq_freq,
         channel_names_list,
         transform_pipeline,
-        augment=False,
-        random_crop=False,
+        augment=augment_val,
+        random_crop=random_crop_val,
     )
 
     return train_dataset, val_dataset
@@ -266,8 +271,8 @@ def batch_iterator(
     dataset,
     batch_size,
     shuffle=True,
-    exp_name=False,
-    max_workers=64,
+    aux=False,
+    max_workers=32,
     prefetch_buffer_size=128,
 ):
     indices = np.arange(len(dataset))
@@ -292,13 +297,14 @@ def batch_iterator(
             samples = [queue.get() for _ in range(n)]
             remaining -= n
 
-            clips, exp_names = zip(*samples)
+            clips, exp_names, metadata = zip(*samples)
 
             clips = np.stack(clips)
             exp_names = list(exp_names)
+            metadata = list(metadata)
 
-            if exp_name:
-                yield clips, exp_names
+            if aux:
+                yield {"clips": clips, "exp_names": exp_names, "metadata": metadata}
             else:
                 yield clips
 

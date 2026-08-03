@@ -452,6 +452,49 @@ class VideoSiamMAE(nn.Module):
                 stddev=0.02), (1, self.decoder_emb_dim))
 
     @nn.compact
+    def encode(self, source_frames, state=None):
+        """Encode source frames to latent tokens."""
+        source_tokens = self.tokenizer(source_frames)
+        *b, num_source_frames, _, _, source_tokens_d = source_tokens.shape
+
+        # Flatten source tokens
+        source_tokens = einops.rearrange(source_tokens, '... h w D -> ... (h w) D')
+
+        # Append cls token to source
+        cls_token = jnp.broadcast_to(
+            self.cls_token, b + [num_source_frames, 1, self.cls_token.shape[-1]]
+        )
+        source_tokens = jnp.concatenate([cls_token, source_tokens], axis=-2)
+
+        # Encode source frames
+        num_source_tokens = source_tokens.shape[-2]
+        source_tokens = jnp.reshape(
+            source_tokens,
+            (np.prod(b) * num_source_frames, num_source_tokens, source_tokens_d),
+        )
+        encoded_source_tokens = self.encoder(source_tokens)
+        encoded_source_tokens = jnp.reshape(
+            encoded_source_tokens,
+            b + [num_source_frames, num_source_tokens, encoded_source_tokens.shape[-1]],
+        )
+
+        # Scan encoded source tokens through time with RNN core
+        if state is None:
+            state = self.rnn_core.initializer(
+                encoded_source_tokens[..., 0, :, :],
+                batch_shape=tuple(b),
+            )
+
+        all_encoded_source_tokens = []
+        for t in range(num_source_frames):
+            encoded, state = self.rnn_core(
+                encoded_source_tokens[..., t, :, :], state)
+            all_encoded_source_tokens.append(encoded)
+        encoded_source_tokens = jnp.stack(all_encoded_source_tokens, axis=-3)
+
+        return encoded_source_tokens
+
+    @nn.compact
     def __call__(
         self,
         source_frames,
