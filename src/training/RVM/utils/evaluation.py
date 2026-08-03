@@ -42,7 +42,7 @@ def compute_outputs(
             method="nearest",
         )
         mask = jnp.repeat(mask, targets.shape[-1], axis=-1)  # Repeat mask for each channel
-        features = output["features"][..., -1, :, :]  # Discard intermediates
+        features = jnp.mean(output["features"], axis=1)  # Temporal averaging
 
         output["mask"] = mask
         output["features"] = features
