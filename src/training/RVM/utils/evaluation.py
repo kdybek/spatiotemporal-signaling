@@ -115,7 +115,6 @@ def visualize_reconstructions(reconstructed, targets, masks, max_samples=8):
 
 
 def visualize_features(features, labels):
-    features = jnp.mean(features, axis=1)  # Average over the spatial dimension
     assert len(labels) == features.shape[0], \
         "Number of labels must match the number of feature vectors."
 
@@ -128,7 +127,6 @@ def visualize_features(features, labels):
     tsne = TSNE(
         n_components=2,
         perplexity=min(30, len(features)),
-        random_state=42,
     )
     tsne_features = tsne.fit_transform(features)
 
@@ -146,14 +144,12 @@ def visualize_features(features, labels):
     return {f"{DIM_RED_SUBFOLDER}/tsne": wandb.Image(fig)}
 
 
-def evaluate_probing(features, labels, cv=5, random_state=42):
+def evaluate_probing(features, labels, cv=5):
     assert len(labels) == features.shape[0], \
         "Number of labels must match the number of feature vectors."
 
     if len(features) < cv:
         return {}
-
-    features = jnp.mean(features, axis=1)  # Average over the spatial dimension
 
     clf = Pipeline([
         ("scaler", StandardScaler()),
@@ -163,7 +159,6 @@ def evaluate_probing(features, labels, cv=5, random_state=42):
     cv_split = StratifiedKFold(
         n_splits=cv,
         shuffle=True,
-        random_state=random_state
     )
 
     scores = cross_val_score(
