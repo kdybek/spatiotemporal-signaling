@@ -451,7 +451,6 @@ class VideoSiamMAE(nn.Module):
             self.mask_token = self.param('mask_token', nn.initializers.normal(
                 stddev=0.02), (1, self.decoder_emb_dim))
 
-    @nn.compact
     def encode(self, source_frames, state=None):
         """Encode source frames to latent tokens."""
         source_tokens = self.tokenizer(source_frames)
@@ -494,7 +493,6 @@ class VideoSiamMAE(nn.Module):
 
         return encoded_source_tokens
 
-    @nn.compact
     def __call__(
         self,
         source_frames,
