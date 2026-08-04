@@ -12,13 +12,15 @@
 #SBATCH --mem=64G
 
 export SCRATCH=~/myscratch
-export DATA_DIR=~/myimaging
+export DATA_DIR=$SCRATCH/datasets
 
 export XDG_CACHE_HOME=$SCRATCH/.cache
 export WANDB_API_KEY=$(cat ~/.wandb_key)
 
-cd $SCRATCH/spatiotemporal-signaling/src/training/RVM
+cd $SCRATCH/spatiotemporal-signaling/
+git restore .
 git pull
+cd src/training/RVM
 source .venv/bin/activate
 
 python main.py --dataset_path $DATA_DIR/geminin_drugs_full_vid_3.zarr \
