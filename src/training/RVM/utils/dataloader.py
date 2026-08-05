@@ -272,7 +272,7 @@ def batch_iterator(
     batch_size,
     shuffle=True,
     aux=False,
-    max_workers=32,
+    max_workers=8,
     prefetch_buffer_size=128,
 ):
     indices = np.arange(len(dataset))
