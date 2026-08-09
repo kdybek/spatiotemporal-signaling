@@ -15,4 +15,4 @@ export SCRATCH=~/myscratch
 export XDG_CACHE_HOME=$SCRATCH/.cache
 export WANDB_API_KEY=$(cat ~/.wandb_key)
 
-cp -r $SCRATCH/spatiotemporal-signaling/src/training/RVM/checkpoints/* ~/spatiotemporal-signaling/src/training/RVM/checkpoints/
+cp -a $SCRATCH/spatiotemporal-signaling/src/training/RVM/checkpoints/. ~/spatiotemporal-signaling/src/training/RVM/checkpoints/
