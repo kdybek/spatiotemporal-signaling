@@ -21,7 +21,7 @@ SEED = 0
 CONFIG_PATH = 'checkpoints/rvm_200K_2Ch/config.json'
 CHECKPOINT_PATH = 'checkpoints/rvm_200K_2Ch/checkpoint_200000'
 BATCH_SIZE = 16
-NUM_SAMPLES = 10000
+NUM_SAMPLES = 50000
 OUTPUT_DIR = 'latents/rvm_200K_2Ch'
 CLIP_FRAMES = 16
 DATASET_PATH = '/home/zppmimuw/myscratch/datasets/geminin_drugs_full_vid_3.zarr'
@@ -128,7 +128,8 @@ def probe(features, labels, label_name, time_horizon):
         scoring="accuracy"
     )
 
-    print(f"Time horizon: {time_horizon}, label: {label_name}, accuracy: {np.mean(scores):.4f} ± {np.std(scores):.4f}")
+    print(f"Time horizon: {time_horizon}, label: {label_name}, accuracy: {
+          np.mean(scores):.4f} ± {np.std(scores):.4f}")
 
 
 def plot_tsne(features, labels, label_name, time_horizon, random_state=42):
@@ -169,7 +170,8 @@ def plot_tsne(features, labels, label_name, time_horizon, random_state=42):
         loc="upper left"
     )
     plt.tight_layout()
-    plt.savefig(f"{OUTPUT_DIR}/tsne_{label_name.replace(' ', '_')}_time_horizon_{time_horizon}.png", dpi=300)
+    plt.savefig(f"{OUTPUT_DIR}/tsne_{label_name.replace(' ', '_')
+                                     }_time_horizon_{time_horizon}.png", dpi=300)
     plt.close()
 
 
@@ -253,6 +255,15 @@ def main():
         probe(pref_pool_feat, type_inhibitor, "cell type + inhibitor", time_horizon)
         probe(order_features_same_loc_t2, order_labels, "order same loc", time_horizon)
         probe(order_features_diff_loc_t2, order_labels, "order diff loc", time_horizon)
+
+        for cell_type in set(cell_types):
+            mask = np.array(cell_types) == cell_type
+            probe(pref_pool_feat[mask], inhibitors[mask],
+                  f"inhibitor ({cell_type})", time_horizon)
+            probe(order_features_same_loc_t2[mask], order_labels[mask], f"order same loc ({
+                  cell_type})", time_horizon)
+            probe(order_features_diff_loc_t2[mask], order_labels[mask], f"order diff loc ({
+                  cell_type})", time_horizon)
 
 
 if __name__ == "__main__":
