@@ -100,7 +100,7 @@ def extract_latents(
     features_same_loc_t2 = np.array(all_features_same_loc_t2)
     features_diff_loc_t2 = np.array(all_features_diff_loc_t2)
 
-    features = np.concatenate([features, features_same_loc_t2, features_diff_loc_t2], axis=0)
+    features = np.stack([features, features_same_loc_t2, features_diff_loc_t2], axis=1)
 
     return features, metadata
 
@@ -242,9 +242,9 @@ def main():
     order_labels = [0 if t1 < t2 else 1 for t1, t2 in zip(t1s, t2s, strict=True)]
 
     for time_horizon in [1, 2, 4, 8, 16]:
-        pref_pool_feat = features[0, :, :time_horizon, :].mean(axis=1)
-        pref_pool_feat_same_loc_t2 = features[1, :, :time_horizon, :].mean(axis=1)
-        pref_pool_feat_diff_loc_t2 = features[2, :, :time_horizon, :].mean(axis=1)
+        pref_pool_feat = features[:, 0, :time_horizon, :].mean(axis=1)
+        pref_pool_feat_same_loc_t2 = features[:, 1, :time_horizon, :].mean(axis=1)
+        pref_pool_feat_diff_loc_t2 = features[:, 2, :time_horizon, :].mean(axis=1)
         order_features_same_loc_t2 = pref_pool_feat_same_loc_t2 - pref_pool_feat
         order_features_diff_loc_t2 = pref_pool_feat_diff_loc_t2 - pref_pool_feat
 
