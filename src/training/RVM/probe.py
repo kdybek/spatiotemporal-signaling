@@ -15,19 +15,19 @@ from sklearn.manifold import TSNE
 from sklearn.preprocessing import LabelEncoder
 
 from utils.model import get_rvm
-from utils.dataloader import create_train_val_datasets, TransformPipeline, batch_iterator
+from utils.probing_dataloader import create_train_val_datasets, TransformPipeline, batch_iterator
 
 SEED = 0
 CONFIG_PATH = 'checkpoints/rvm_200K_2Ch/config.json'
-CHECKPOINT_PATH = 'checkpoints/rvm_200K_2Ch/checkpoint_20000'
+CHECKPOINT_PATH = 'checkpoints/rvm_200K_2Ch/checkpoint_200000'
 BATCH_SIZE = 16
 NUM_SAMPLES = 10000
 OUTPUT_DIR = 'latents/rvm_200K_2Ch'
 CLIP_FRAMES = 16
 DATASET_PATH = '/home/zppmimuw/myscratch/datasets/geminin_drugs_full_vid_3.zarr'
 
-FEATURES_PATH = os.path.join(OUTPUT_DIR, 'features_.npy')
-FEATURES_METADATA_PATH = os.path.join(OUTPUT_DIR, 'metadata_.pkl')
+FEATURES_PATH = os.path.join(OUTPUT_DIR, 'features_pairs.npy')
+FEATURES_METADATA_PATH = os.path.join(OUTPUT_DIR, 'metadata_pairs.pkl')
 
 
 def set_seed(seed):
@@ -65,18 +65,28 @@ def extract_latents(
         return output
 
     all_features = []
+    all_features_same_loc_t2 = []
+    all_features_diff_loc_t2 = []
     metadata = []
     num_samples = 0
     while num_samples < NUM_SAMPLES:
         loader = batch_iterator(dataset, batch_size=BATCH_SIZE, aux=True)
         for batch in loader:
             clips = batch["clips"]
+            clips_same_loc_t2 = batch["clips_same_loc_t2"]
+            clips_diff_loc_t2 = batch["clips_diff_loc_t2"]
             meta = batch["metadata"]
             clips = np.transpose(clips, (0, 1, 3, 4, 2))
+            clips_same_loc_t2 = np.transpose(clips_same_loc_t2, (0, 1, 3, 4, 2))
+            clips_diff_loc_t2 = np.transpose(clips_diff_loc_t2, (0, 1, 3, 4, 2))
 
             features = forward(clips)
+            features_same_loc_t2 = forward(clips_same_loc_t2)
+            features_diff_loc_t2 = forward(clips_diff_loc_t2)
 
             all_features.extend(np.array(features))
+            all_features_same_loc_t2.extend(np.array(features_same_loc_t2))
+            all_features_diff_loc_t2.extend(np.array(features_diff_loc_t2))
             metadata.extend(meta)
 
             num_samples += len(clips)
@@ -87,6 +97,10 @@ def extract_latents(
             print(f"Extracted {num_samples} samples...")
 
     features = np.array(all_features)
+    features_same_loc_t2 = np.array(all_features_same_loc_t2)
+    features_diff_loc_t2 = np.array(all_features_diff_loc_t2)
+
+    features = np.concatenate([features, features_same_loc_t2, features_diff_loc_t2], axis=0)
 
     return features, metadata
 
@@ -222,12 +236,23 @@ def main():
 
     type_inhibitor = [cell_types[i] + inhibitors[i] for i in range(len(cell_types))]
 
+    t1s = [m['t1'] for m in metadata]
+    t2s = [m['t2'] for m in metadata]
+
+    order_labels = [0 if t1 < t2 else 1 for t1, t2 in zip(t1s, t2s, strict=True)]
+
     for time_horizon in [1, 2, 4, 8, 16]:
-        pref_pool_feat = features[:, :time_horizon, :].mean(axis=1)
+        pref_pool_feat = features[0, :, :time_horizon, :].mean(axis=1)
+        pref_pool_feat_same_loc_t2 = features[1, :, :time_horizon, :].mean(axis=1)
+        pref_pool_feat_diff_loc_t2 = features[2, :, :time_horizon, :].mean(axis=1)
+        order_features_same_loc_t2 = pref_pool_feat_same_loc_t2 - pref_pool_feat
+        order_features_diff_loc_t2 = pref_pool_feat_diff_loc_t2 - pref_pool_feat
 
         probe(pref_pool_feat, cell_types, "cell type", time_horizon)
         probe(pref_pool_feat, inhibitors, "inhibitor", time_horizon)
         probe(pref_pool_feat, type_inhibitor, "cell type + inhibitor", time_horizon)
+        probe(order_features_same_loc_t2, order_labels, "order same loc", time_horizon)
+        probe(order_features_diff_loc_t2, order_labels, "order diff loc", time_horizon)
 
 
 if __name__ == "__main__":
