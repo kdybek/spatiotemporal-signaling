@@ -212,10 +212,10 @@ def collect_features():
 def main():
     if not os.path.exists(FEATURES_PATH) or not os.path.exists(FEATURES_METADATA_PATH):
         collect_features()
-    else:
-        features = np.load(FEATURES_PATH)
-        with open(FEATURES_METADATA_PATH, 'rb') as f:
-            metadata = pickle.load(f)
+
+    features = np.load(FEATURES_PATH)
+    with open(FEATURES_METADATA_PATH, 'rb') as f:
+        metadata = pickle.load(f)
 
     cell_types = [m['Cell_type'] for m in metadata]
     inhibitors = [m['Inhibitor'] for m in metadata]
