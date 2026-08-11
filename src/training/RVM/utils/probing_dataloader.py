@@ -324,19 +324,19 @@ def batch_iterator(
             samples = [queue.get() for _ in range(n)]
             remaining -= n
 
-            clips, clip_same_loc_t2, clip_diff_loc_t2, exp_names, metadata = zip(*samples)
+            clips, clips_same_loc_t2, clips_diff_loc_t2, exp_names, metadata = zip(*samples)
 
             clips = np.stack(clips)
-            clip_same_loc_t2 = np.stack(clip_same_loc_t2)
-            clip_diff_loc_t2 = np.stack(clip_diff_loc_t2)
+            clips_same_loc_t2 = np.stack(clips_same_loc_t2)
+            clips_diff_loc_t2 = np.stack(clips_diff_loc_t2)
             exp_names = list(exp_names)
             metadata = list(metadata)
 
             if aux:
                 yield {
                     "clips": clips,
-                    "clip_same_loc_t2": clip_same_loc_t2,
-                    "clip_diff_loc_t2": clip_diff_loc_t2,
+                    "clips_same_loc_t2": clips_same_loc_t2,
+                    "clips_diff_loc_t2": clips_diff_loc_t2,
                     "exp_names": exp_names,
                     "metadata": metadata
                 }
