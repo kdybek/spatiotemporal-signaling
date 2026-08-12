@@ -252,7 +252,7 @@ def main():
     t1s = [m['t1'] for m in metadata]
     t2s = [m['t2'] for m in metadata]
 
-    order_labels = [0 if t1 < t2 else 1 for t1, t2 in zip(t1s, t2s, strict=True)]
+    order_labels = np.array([0 if t1 < t2 else 1 for t1, t2 in zip(t1s, t2s, strict=True)])
 
     for time_horizon in [1, 2, 4, 8, 16]:
         pref_pool_feat = features[:, 0, :time_horizon, :].mean(axis=1)
