@@ -233,10 +233,21 @@ def main():
     with open(FEATURES_METADATA_PATH, 'rb') as f:
         metadata = pickle.load(f)
 
-    cell_types = [m['Cell_type'] for m in metadata]
-    inhibitors = [m['Inhibitor'] for m in metadata]
+    cell_types = np.array([m['Cell_type'] for m in metadata])
+    inhibitors = np.array([m['Inhibitor'] for m in metadata])
+    types_and_inhibitors = np.array([cell_types[i] + inhibitors[i]
+                                     for i in range(len(cell_types))])
 
-    type_inhibitor = [cell_types[i] + inhibitors[i] for i in range(len(cell_types))]
+    print("Classes counts:")
+    cell_type_counts = {cell_type: np.sum(cell_types == cell_type)
+                        for cell_type in set(cell_types)}
+    inhibitor_counts = {inhibitor: np.sum(inhibitors == inhibitor)
+                        for inhibitor in set(inhibitors)}
+    type_inhibitor_counts = {type_inhibitor: np.sum(types_and_inhibitors == type_inhibitor)
+                             for type_inhibitor in set(types_and_inhibitors)}
+    print("Cell types:", cell_type_counts)
+    print("Inhibitors:", inhibitor_counts)
+    print("Cell type + inhibitor:", type_inhibitor_counts)
 
     t1s = [m['t1'] for m in metadata]
     t2s = [m['t2'] for m in metadata]
@@ -252,18 +263,36 @@ def main():
 
         probe(pref_pool_feat, cell_types, "cell type", time_horizon)
         probe(pref_pool_feat, inhibitors, "inhibitor", time_horizon)
-        probe(pref_pool_feat, type_inhibitor, "cell type + inhibitor", time_horizon)
+        probe(pref_pool_feat, types_and_inhibitors,
+              "cell type + inhibitor", time_horizon)
         probe(order_features_same_loc_t2, order_labels, "order same loc", time_horizon)
         probe(order_features_diff_loc_t2, order_labels, "order diff loc", time_horizon)
 
-        for cell_type in set(cell_types):
-            mask = np.array(cell_types) == cell_type
-            probe(pref_pool_feat[mask], inhibitors[mask],
-                  f"inhibitor ({cell_type})", time_horizon)
-            probe(order_features_same_loc_t2[mask], order_labels[mask], f"order same loc ({
-                  cell_type})", time_horizon)
-            probe(order_features_diff_loc_t2[mask], order_labels[mask], f"order diff loc ({
-                  cell_type})", time_horizon)
+        if time_horizon == 16:
+            for cell_type in set(cell_types):
+                mask = cell_types == cell_type
+                probe(pref_pool_feat[mask], inhibitors[mask],
+                      f"inhibitor ({cell_type})", time_horizon)
+                probe(order_features_same_loc_t2[mask], order_labels[mask], f"order same loc ({
+                      cell_type})", time_horizon)
+                probe(order_features_diff_loc_t2[mask], order_labels[mask], f"order diff loc ({
+                      cell_type})", time_horizon)
+
+            for inhibitor in set(inhibitors):
+                mask = inhibitors == inhibitor
+                probe(pref_pool_feat[mask], cell_types[mask],
+                      f"cell type ({inhibitor})", time_horizon)
+                probe(order_features_same_loc_t2[mask], order_labels[mask], f"order same loc ({
+                      inhibitor})", time_horizon)
+                probe(order_features_diff_loc_t2[mask], order_labels[mask], f"order diff loc ({
+                      inhibitor})", time_horizon)
+
+            for type_and_inhibitor in set(types_and_inhibitors):
+                mask = types_and_inhibitors == type_and_inhibitor
+                probe(order_features_same_loc_t2[mask], order_labels[mask],
+                      f"order same loc ({type_and_inhibitor})", time_horizon)
+                probe(order_features_diff_loc_t2[mask], order_labels[mask],
+                      f"order diff loc ({type_and_inhibitor})", time_horizon)
 
 
 if __name__ == "__main__":
