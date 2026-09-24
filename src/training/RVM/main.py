@@ -60,7 +60,7 @@ flags.DEFINE_float('butterworth_cutoff', 0.2,
                    'Cutoff frequency for Butterworth low-pass filter.')
 flags.DEFINE_integer('butterworth_order', 2,
                      'Order of Butterworth low-pass filter.')
-flags.DEFINE_boolean('per_frame_butterworth', False,
+flags.DEFINE_boolean('per_frame_butterworth', True,
                      'Whether to apply Butterworth filter independently to each frame (instead of across time).')
 
 flags.DEFINE_string('checkpoint_path', None,
