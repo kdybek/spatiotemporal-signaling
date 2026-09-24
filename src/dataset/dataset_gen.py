@@ -7,6 +7,7 @@ import tifffile as tiff
 import numpy as np
 import math
 from tqdm import tqdm
+import itertools
 
 
 def load_tiff(path):
@@ -96,6 +97,33 @@ def throw_out_frames(video, metadata, acq_freq):
     return video, metadata
 
 
+def stratified_split(items, train_fraction, seed):
+    metas = [item["Metadata"] for item in items]
+    layer_keys = ["Path", "Cell_type", "Inhibitor"]
+    valid_items_inds = [i for i, meta in enumerate(metas) if all(key in meta for key in layer_keys)]
+    invalid_item_inds = [i for i, meta in enumerate(metas) if not all(key in meta for key in layer_keys)]
+
+    layers_inds = {}
+    for i in valid_items_inds:
+        meta = metas[i]
+        layer_key = tuple(meta[key] for key in layer_keys)
+        if layer_key not in layers_inds:
+            layers_inds[layer_key] = []
+        layers_inds[layer_key].append(i)
+
+    train_items = []
+    val_items = []
+    rng = np.random.default_rng(seed)
+    for layer_inds in itertools.chain(layers_inds.values(), [invalid_item_inds]):
+        layer = [items[i] for i in layer_inds]
+        rng.shuffle(layer)
+        split_idx = max(int(len(layer) * (1 - train_fraction)), 1)  # Take at least one item for the validation split
+        val_items.extend(layer[:split_idx])
+        train_items.extend(layer[split_idx:])
+
+    return train_items, val_items
+
+
 def create_zarr_dataset(
         items,
         out_path,
@@ -105,12 +133,7 @@ def create_zarr_dataset(
 ):
     items = list(items)
 
-    rng = np.random.default_rng(seed)
-    perm = rng.permutation(len(items))
-
-    split_idx = int(len(items) * train_fraction)
-    train_items = [items[i] for i in perm[:split_idx]]
-    val_items = [items[i] for i in perm[split_idx:]]
+    train_items, val_items = stratified_split(items, train_fraction, seed)
 
     root = zarr.open(out_path, mode='w')
 
