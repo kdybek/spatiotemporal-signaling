@@ -10,6 +10,7 @@ def update_model(
     optimizer,
     sources,
     targets,
+    channel_inds,
     target_deltas,
     rng_key,
 ):
@@ -18,11 +19,13 @@ def update_model(
             {"params": params},
             sources,
             targets,
+            channel_inds,
             target_deltas,
             rngs={"default": rng_key},
         )
 
-        reconstructed = output["reconstructed"]
+        reconstructed = jnp.take_along_axis(output["reconstructed"], channel_inds[:, None, None, None, :], axis=-1)
+        targets_ = jnp.take_along_axis(targets, channel_inds[:, None, None, None, :], axis=-1)
         mask = output["mask"]
 
         mask = jax.image.resize(
@@ -30,7 +33,7 @@ def update_model(
         )
         mask = jnp.repeat(mask, targets.shape[-1], axis=-1)
 
-        error = (reconstructed - targets) ** 2
+        error = (reconstructed - targets_) ** 2
         mse_loss = jnp.sum(mask * error) / (jnp.sum(mask) + 1e-8)
 
         return mse_loss

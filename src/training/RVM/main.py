@@ -37,7 +37,7 @@ flags.DEFINE_integer('clip_size', 256, 'Height and width of input images.')
 flags.DEFINE_integer('clip_frames', 64, 'Number of frames in each video clip.')
 flags.DEFINE_float('acq_freq', 15.0,
                    'Acquisition frequency (in minutes) for sampling video clips.')
-flags.DEFINE_string('channel_names', 'Ch_ERK-KTR',
+flags.DEFINE_string('channel_names', 'Ch_H2B Ch_ERK-KTR Ch_AKT-KTR Ch_Geminin',
                     'Space-separated list of channel names to use from the videos.')
 
 flags.DEFINE_integer('src_frames', 4, 'Number of source frames for reconstruction.')
@@ -200,6 +200,7 @@ def main(_):
         opt_state,
         sources,
         targets,
+        channel_inds,
         target_deltas,
         rng_key,
     ):
@@ -210,6 +211,7 @@ def main(_):
             optimizer,
             sources,
             targets,
+            channel_inds,
             target_deltas,
             rng_key,
         )
@@ -220,7 +222,7 @@ def main(_):
 
     while step < FLAGS.steps + 1:
         loader = batch_iterator(train_dataset, batch_size=FLAGS.batch_size)
-        for clips in tqdm(loader, desc='Training epoch'):
+        for clips, channel_inds, _ in tqdm(loader, desc='Training epoch'):
             metrics = {}
 
             src, tgt, offsets = prepare_rvm_src_tgt_pairs(
@@ -238,6 +240,7 @@ def main(_):
                 opt_state,
                 src,
                 tgt,
+                channel_inds,
                 offsets,
                 train_key,
             )
@@ -251,6 +254,7 @@ def main(_):
                     params,
                     FLAGS.src_frames,
                     FLAGS.tgt_frames,
+                    FLAGS.channel_names.split(),
                     FLAGS.src_sample_prefix,
                     FLAGS.min_offset,
                     FLAGS.max_offset,

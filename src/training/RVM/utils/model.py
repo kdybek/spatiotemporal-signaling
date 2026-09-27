@@ -82,10 +82,10 @@ class MultiChannelTokenizer(nn.Module):
 
         Args:
             images: Input images with shape (B, T, H, W, C).
-            channel_inds: Channel indices for each video, shape (B, C').
+            channel_inds: Channel indices for each video, shape (B, c).
 
         Returns:
-            Tokens with shape (B, num_patches_c, num_patches_h, num_patches_w, num_features).
+            Tokens with shape (B, T, num_patches_c, num_patches_h, num_patches_w, num_features).
         """
         channels = []
         for i in range(videos.shape[-1]):
@@ -101,14 +101,8 @@ class MultiChannelTokenizer(nn.Module):
             channels.append(channel_tokens)
 
         tokens = jnp.stack(channels, axis=2)
-        B, T, _, h, w, d = tokens.shape
 
-        index = jnp.broadcast_to(channel_inds[:, None, :, None, None, None], (B, T, channel_inds.shape[1], h, w, d))
-
-        # Gather visible channels
-        tokens = jnp.take_along_axis(tokens, index, axis=1)
-
-        return tokens
+        return jnp.take_along_axis(tokens, channel_inds[:, None, :, None, None, None], axis=2)
 
 
 class TransformerMLP(nn.Module):
@@ -536,13 +530,11 @@ class VideoSiamMAE(nn.Module):
     num_channels: int = 4
 
     def setup(self):
-        self.cls_token = self.param('cls_token', nn.initializers.normal(
-            stddev=0.02), (1, self.latent_emb_dim))
-        self.channel_embeddings = [
-            self.param(f'channel_emb_{i}', nn.initializers.normal(
-                stddev=0.02), (1, self.latent_emb_dim))
-            for i in range(self.num_channels)
-        ]
+        self.channel_embeddings = self.param(
+            'channel_embeddings',
+            nn.initializers.normal(stddev=0.02),
+            (self.num_channels, self.latent_emb_dim),
+        )
         if self.decoder is not None:
             self.mask_token = self.param('mask_token', nn.initializers.normal(
                 stddev=0.02), (1, self.decoder_emb_dim))
@@ -594,7 +586,7 @@ class VideoSiamMAE(nn.Module):
         self,
         source_frames,
         target_frames,
-        channel_mask,
+        channel_inds,
         target_deltas=None,
         state=None,
         rng_key=None,
@@ -604,7 +596,7 @@ class VideoSiamMAE(nn.Module):
         Args:
           source_frames: Source (context) frames, shape (B, T, H, W, C).
           target_frames: Target frames to reconstruct, shape (B, TT, H, W, C).
-          channel_mask: Boolean mask indicating which channels to use, shape (B, C).
+          channel_inds: Indices of the channels to use, shape (B, c).
 
           target_deltas: Optional temporal deltas, shape (B, TT), integer.
           state: Optional recurrent state from previous call.
@@ -617,26 +609,17 @@ class VideoSiamMAE(nn.Module):
         if rng_key is None:
             rng_key = self.make_rng('default')
 
-        assert jnp.all(channel_mask.sum(axis=1) == channel_mask.sum(axis=1)[0]), \
-            'All batch elements must have the same number of visible channels.'
-        
-        num_visible = channel_mask.sum(axis=1)[0]
-
-        # Indices of visible channels for each batch element
-        channel_inds = jnp.argsort(~channel_mask, axis=1, stable=True)[:, :num_visible]
-
         # Tokenize source and target frames
         source_tokens = self.tokenizer(source_frames, channel_inds)
-        *_, num_source_frames, source_tokens_c, _, _, source_tokens_d = source_tokens.shape
+        *_, num_source_frames, source_tokens_c, source_tokens_h, source_tokens_w, source_tokens_d = source_tokens.shape
         target_tokens = self.tokenizer(target_frames, channel_inds)
         *b, num_target_frames, target_tokens_c, target_tokens_h, target_tokens_w, target_tokens_d = (
             target_tokens.shape
         )
 
-        for i in range(source_tokens_c):
-            source_tokens = source_tokens.at[..., i, :, :, :].add(
-                self.channel_embeddings[channel_inds[..., i]]
-            )
+        channel_embs = self.channel_embeddings[channel_inds]
+        source_tokens = source_tokens + channel_embs[:, None, :, None, None, :]
+        target_tokens = target_tokens + channel_embs[:, None, :, None, None, :]
 
         for i in range(target_tokens_c):
             target_tokens = target_tokens.at[..., i, :, :, :].add(
@@ -645,12 +628,6 @@ class VideoSiamMAE(nn.Module):
 
         # Flatten source tokens
         source_tokens = einops.rearrange(source_tokens, '... c h w D -> ... (c h w) D')
-
-        # Append cls token to source
-        cls_token = jnp.broadcast_to(
-            self.cls_token, b + [num_source_frames, 1, self.cls_token.shape[-1]]
-        )
-        source_tokens = jnp.concatenate([cls_token, source_tokens], axis=-2)
 
         # Mask target tokens
         target_tokens_flat = einops.rearrange(
@@ -662,10 +639,6 @@ class VideoSiamMAE(nn.Module):
         visible_target = einops.rearrange(
             visible_target, '... c hw D -> ... (c hw) D'
         )
-        cls_token_t = jnp.broadcast_to(
-            self.cls_token, b + [num_target_frames, 1, self.cls_token.shape[-1]]
-        )
-        target_with_cls = jnp.concatenate([cls_token_t, visible_target], axis=-2)
 
         # Encode source frames
         num_source_tokens = source_tokens.shape[-2]
@@ -692,14 +665,21 @@ class VideoSiamMAE(nn.Module):
                 encoded_source_tokens[..., t, :, :], state)
             all_encoded_source_tokens.append(encoded)
         encoded_source_tokens = jnp.stack(all_encoded_source_tokens, axis=-3)
+        features = einops.rearrange(
+            encoded_source_tokens, 
+            '... (c h w) D -> ... c h w D', 
+            c=source_tokens_c, 
+            h=source_tokens_h, 
+            w=source_tokens_w
+        )
 
         # Encode target frames
-        num_target_tokens = target_with_cls.shape[-2]
-        target_with_cls = jnp.reshape(
-            target_with_cls,
+        num_target_tokens = visible_target.shape[-2]
+        visible_target = jnp.reshape(
+            visible_target,
             (np.prod(b) * num_target_frames, num_target_tokens, target_tokens_d),
         )
-        encoded_targets = self.encoder(target_with_cls)
+        encoded_targets = self.encoder(visible_target)
         encoded_targets = jnp.reshape(
             encoded_targets,
             b + [num_target_frames, num_target_tokens, encoded_targets.shape[-1]],
@@ -709,8 +689,7 @@ class VideoSiamMAE(nn.Module):
         embedded_target_tokens = self.decoder_embedder(encoded_targets)
 
         # Separate cls token
-        target_cls = embedded_target_tokens[..., 0:1, :]
-        unmasked_tokens = embedded_target_tokens[..., 1:, :]
+        unmasked_tokens = embedded_target_tokens
 
         unmasked_tokens = einops.rearrange(
             unmasked_tokens, '... (c hw) D -> ... c hw D', c=target_tokens_c, hw=target_tokens_h * target_tokens_w
@@ -733,10 +712,7 @@ class VideoSiamMAE(nn.Module):
         )
 
         # Add channel embeddings to unshuffled tokens
-        for i in range(target_tokens_c):
-            unshuffled_tokens = unshuffled_tokens.at[..., i, :, :].add(
-                self.channel_embeddings[channel_inds[..., i]]
-            )
+        unshuffled_tokens = unshuffled_tokens + channel_embs[:, None, :, None, :]
 
         # Encode target deltas
         if self.delta_embedder is not None and target_deltas is not None:
@@ -763,10 +739,13 @@ class VideoSiamMAE(nn.Module):
         unshuffled_tokens += latent_posenc
 
         unshuffled_tokens = einops.rearrange(
-            unshuffled_tokens, '... c hw D -> ... (c hw) D'
+            unshuffled_tokens, '... hw D -> ... h w D', h=target_tokens_h, w=target_tokens_w
+        )
+        unshuffled_tokens = einops.rearrange(
+            unshuffled_tokens, '... c h w D -> ... (c h w) D'
         )
 
-        to_decode = jnp.concatenate([target_cls, unshuffled_tokens], axis=-2)
+        to_decode = unshuffled_tokens
 
         # Prepare KV from encoded source tokens
         inputs_kv = einops.rearrange(
@@ -781,7 +760,7 @@ class VideoSiamMAE(nn.Module):
 
         # Reshape back to image space
         reconstructed = jnp.reshape(
-            decoded[..., 1:, :],
+            decoded,
             b + [
                 num_target_frames,
                 target_tokens_c,
@@ -800,7 +779,7 @@ class VideoSiamMAE(nn.Module):
         return {
             'reconstructed': reconstructed,
             'mask': mask,
-            'features': encoded_source_tokens,
+            'features': features,
             'state': state,
         }
 

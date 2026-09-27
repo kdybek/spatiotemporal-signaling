@@ -139,7 +139,7 @@ def process_split_channel_matched_tiffs(tiff_paths, exp_metadata):
                              channel_pattern}' for channel {channel}: {channel_tiff_paths}.")
 
         channel_metadata[f"{channel}_tiff"] = str(channel_tiff_paths[0])
-        channel_metadata[f"{channel}"] = channel_idx
+        channel_metadata[f"{channel}_idx"] = channel_idx
         channel_paths.append(str(channel_tiff_paths[0]))
         channel_idx += 1
 
@@ -164,7 +164,7 @@ def process_non_split_channel_matched_tiffs(tiff_paths, exp_metadata):
 
     for channel in channels:
         channel_num = int(exp_metadata[channel])
-        channel_metadata[f"{channel}"] = channel_num - 1
+        channel_metadata[f"{channel}_idx"] = channel_num - 1
 
     channel_metadata["All_channels_tiff"] = str(tiff_paths[0])
 

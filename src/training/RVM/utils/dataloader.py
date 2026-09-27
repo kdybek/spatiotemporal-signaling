@@ -61,10 +61,13 @@ def snap_to_chunk_size(value, chunk_size):
     return (value // chunk_size) * chunk_size
 
 
-def get_clip(root, video_name, clip_frames, clip_size, acq_freq, channel_names_list, random_crop, validation=False):
+def get_clip(root, video_name, clip_frames, clip_size, acq_freq, channel_names_list, random_crop, num_available_channels=3, validation=False):
     video_shape = root[video_name].shape
     video_metadata = root[video_name].attrs["Metadata"]
-    channel_indices = [video_metadata[name] for name in channel_names_list]
+    channel_indices = [video_metadata.get(f"{name}_idx", 0) for name in channel_names_list]
+    channel_mask = [video_metadata.get(f"{name}_idx", 10000) for name in channel_names_list]
+    channel_mask = np.array(channel_mask) < 10000  # True for channels that are present
+    channel_inds = np.argsort(~channel_mask, kind='stable')[:num_available_channels]
     T, C, H, W = video_shape
     original_acq_freq = video_metadata["Acq_freq_min"]
     magnification = video_metadata["Magnification"]
@@ -112,7 +115,7 @@ def get_clip(root, video_name, clip_frames, clip_size, acq_freq, channel_names_l
     if downsample_2x:
         clip = downsample_video_2x(clip)
 
-    return clip
+    return clip, channel_inds
 
 
 class TransformPipeline:
@@ -168,7 +171,7 @@ class ZarrVideoDataset():
 
     def __getitem__(self, idx):
         video_name = self.video_names[idx]
-        video = get_clip(
+        video, channel_inds = get_clip(
             self.root,
             video_name,
             self.clip_frames,
@@ -190,11 +193,9 @@ class ZarrVideoDataset():
             if np.random.rand() < 0.5:
                 video = video[:, :, ::-1, :].copy()
 
-        path = self.root[video_name].attrs["Metadata"]["Path"]
-        exp_name = Path(path).name
         metadata = self.root[video_name].attrs["Metadata"]
 
-        return video, exp_name, metadata
+        return video, channel_inds, metadata
 
 
 def create_train_val_datasets(
@@ -271,7 +272,6 @@ def batch_iterator(
     dataset,
     batch_size,
     shuffle=True,
-    aux=False,
     max_workers=32,
     prefetch_buffer_size=128,
 ):
@@ -297,16 +297,13 @@ def batch_iterator(
             samples = [queue.get() for _ in range(n)]
             remaining -= n
 
-            clips, exp_names, metadata = zip(*samples)
+            clips, channel_inds, metadata = zip(*samples)
 
             clips = np.stack(clips)
-            exp_names = list(exp_names)
+            channel_inds = np.stack(channel_inds)
             metadata = list(metadata)
 
-            if aux:
-                yield {"clips": clips, "exp_names": exp_names, "metadata": metadata}
-            else:
-                yield clips
+            yield clips, channel_inds, metadata
 
         # Ensure exceptions from workers are propagated
         for f in futures:
