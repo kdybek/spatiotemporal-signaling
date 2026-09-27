@@ -589,6 +589,7 @@ class VideoSiamMAE(nn.Module):
         channel_inds,
         target_deltas=None,
         state=None,
+        src_channel_drop: bool = False,
         rng_key=None,
     ):
         """Full forward pass with encoder + decoder for masked reconstruction.
@@ -600,6 +601,7 @@ class VideoSiamMAE(nn.Module):
 
           target_deltas: Optional temporal deltas, shape (B, TT), integer.
           state: Optional recurrent state from previous call.
+          src_channel_drop: Whether to drop source channels.
           rng_key: JAX random key for masking.
 
         Returns:
@@ -609,8 +611,19 @@ class VideoSiamMAE(nn.Module):
         if rng_key is None:
             rng_key = self.make_rng('default')
 
+        if src_channel_drop:
+            rng_key, subkey = jax.random.split(rng_key)
+            B, c = channel_inds.shape
+            drop_idx = jax.random.randint(subkey, (B,), 0, c)
+            keep_mask = jnp.ones((B, c), dtype=bool)
+            keep_mask = keep_mask.at[jnp.arange(B), drop_idx].set(False)
+
+            keep_idx = jnp.argsort(~keep_mask, axis=1, stable=True)[:, :-1]
+
+            src_channel_inds = jnp.take_along_axis(channel_inds, keep_idx, axis=1)
+
         # Tokenize source and target frames
-        source_tokens = self.tokenizer(source_frames, channel_inds)
+        source_tokens = self.tokenizer(source_frames, src_channel_inds)
         *_, num_source_frames, source_tokens_c, source_tokens_h, source_tokens_w, source_tokens_d = source_tokens.shape
         target_tokens = self.tokenizer(target_frames, channel_inds)
         *b, num_target_frames, target_tokens_c, target_tokens_h, target_tokens_w, target_tokens_d = (
