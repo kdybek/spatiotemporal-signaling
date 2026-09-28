@@ -467,6 +467,57 @@ class MultiChannelDetokenizer(nn.Module):
         return jnp.stack(channels, axis=-1)
 
 
+class AttentionPooling(nn.Module):
+    """Learnable attention pooling."""
+
+    @nn.compact
+    def __call__(self, tokens):
+        """
+        Args:
+            tokens: (..., N, D)
+
+        Returns:
+            pooled: (..., D)
+            weights: (..., N)
+        """
+        scores = nn.Dense(
+            features=1,
+            kernel_init=nn.initializers.lecun_uniform(),
+            bias_init=nn.initializers.zeros,
+        )(tokens)
+
+        weights = jax.nn.softmax(scores, axis=-2)
+        pooled = jnp.sum(weights * tokens, axis=-2)
+        weights = jnp.squeeze(weights, axis=-1)
+
+        return pooled, weights
+
+
+class AttentionPoolingClassifier(nn.Module):
+    """Classifier with attention pooling."""
+
+    num_classes: int
+
+    @nn.compact
+    def __call__(self, tokens):
+        """
+        Args:
+            tokens: (..., N, D)
+
+        Returns:
+            logits: (..., num_classes)
+            attention_weights: (..., N)
+        """
+        pooled, attention_weights = AttentionPooling()(tokens)
+        logits = nn.Dense(
+            features=self.num_classes,
+            kernel_init=nn.initializers.xavier_uniform(),
+            bias_init=nn.initializers.zeros,
+        )(pooled)
+        
+        return logits, attention_weights
+
+
 def random_masking_with_shared_dim(rng_key, tokens, mask_ratio):
     """Random masking: shuffle tokens and return visible/masked split info.
 
