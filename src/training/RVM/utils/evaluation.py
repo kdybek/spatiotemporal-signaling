@@ -50,11 +50,7 @@ def compute_outputs(
         # Repeat mask for each channel
         mask = jnp.repeat(mask, targets.shape[-1], axis=-1)
 
-        # Average over spatial, temporal, and channel dimensions
-        features = jnp.mean(output["features"], axis=(1, 2, 3, 4))
-
         output["mask"] = mask
-        output["features"] = features
         output["reconstructed"] = jnp.take_along_axis(
             output["reconstructed"], channel_inds[:, None, None, None, :], axis=-1
         )
@@ -66,40 +62,32 @@ def compute_outputs(
 
     reconstruced = []
     masks = []
-    features = []
     targets = []
     channel_inds = []
-    all_exp_names = []
     loader = batch_iterator(test_dataset, batch_size=batch_size)
-    for clips, channel_inds, metadata in tqdm(loader, desc='Evaluation'):
-        exp_names = [m["Path"] for m in metadata]
+    for clips, channel_inds, _ in tqdm(loader, desc='Evaluation'):
         src, tgt, offsets = prepare_rvm_src_tgt_pairs(
             clips, src_frames, tgt_frames, src_sample_prefix, min_offset, max_offset
         )
-        all_exp_names.extend(exp_names)
 
         eval_key, rng_key = jax.random.split(rng_key)
         output = forward(src, tgt, channel_inds, offsets, rng=eval_key)
 
         reconstruced.extend(np.array(output["reconstructed"]))
         masks.extend(np.array(output["mask"]))
-        features.extend(np.array(output["features"]))
         targets.extend(np.array(output["targets"]))
         channel_inds.extend(np.array(channel_inds))
 
     reconstruced = np.array(reconstruced)
     masks = np.array(masks)
-    features = np.array(features)
     targets = np.array(targets)
     channel_inds = np.array(channel_inds)
 
     return {
         "reconstructed": reconstruced,
         "masks": masks,
-        "features": features,
         "targets": targets,
         "channel_inds": channel_inds,
-        "exp_names": all_exp_names,
     }
 
 
@@ -227,15 +215,11 @@ def full_evaluation(
 
     reconstructed = outputs["reconstructed"]
     masks = outputs["masks"]
-    features = outputs["features"]
     targets = outputs["targets"]
     channel_inds = outputs["channel_inds"]
-    exp_names = outputs["exp_names"]
 
     metrics = {}
     metrics.update(evaluate_loss(reconstructed, targets, masks))
     metrics.update(visualize_reconstructions(reconstructed, targets, channel_inds, channel_names_list, masks))
-    metrics.update(visualize_features(features, exp_names))
-    metrics.update(evaluate_probing(features, exp_names))
 
     return metrics

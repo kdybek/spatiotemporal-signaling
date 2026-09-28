@@ -467,12 +467,12 @@ class MultiChannelDetokenizer(nn.Module):
         return jnp.stack(channels, axis=-1)
 
 
-def random_masking(rng_key, tokens, mask_ratio):
+def random_masking_with_shared_dim(rng_key, tokens, mask_ratio):
     """Random masking: shuffle tokens and return visible/masked split info.
 
     Args:
       rng_key: JAX random key.
-      tokens: Input tokens of shape (..., C, N, D).
+      tokens: Input tokens of shape (..., S, N, D).
       mask_ratio: Fraction of tokens to mask (drop).
 
     Returns:
@@ -484,9 +484,9 @@ def random_masking(rng_key, tokens, mask_ratio):
     n_keep = int(n_tokens * (1.0 - mask_ratio))
 
     batch_shape = tokens.shape[:-3]
-    n_channels = tokens.shape[-3]
+    shared_dim = tokens.shape[-3]
 
-    # One permutation per batch element (shared across channels)
+    # One permutation per batch element (shared across the S dimension)
     inds = jnp.broadcast_to(
         jnp.arange(n_tokens),
         batch_shape + (n_tokens,)
@@ -494,7 +494,7 @@ def random_masking(rng_key, tokens, mask_ratio):
 
     inds = jax.random.permutation(rng_key, inds, axis=-2)
 
-    inds = jnp.broadcast_to(inds, batch_shape + (n_channels, n_tokens, 1))
+    inds = jnp.broadcast_to(inds, batch_shape + (shared_dim, n_tokens, 1))
 
     inds_restore = jnp.argsort(inds, axis=-2)
 
@@ -526,7 +526,8 @@ class VideoSiamMAE(nn.Module):
     latent_posenc: nn.Module | None = None
     detokenizer: nn.Module | None = None
     decoder_emb_dim: int = 512
-    masking_ratio: float = 0.95
+    src_masking_ratio: float = 0.0
+    tgt_masking_ratio: float = 0.95
     num_channels: int = 4
 
     def setup(self):
@@ -539,20 +540,20 @@ class VideoSiamMAE(nn.Module):
             self.mask_token = self.param('mask_token', nn.initializers.normal(
                 stddev=0.02), (1, self.decoder_emb_dim))
 
-    def encode(self, source_frames, state=None):
+    def encode(self, source_frames, channel_inds, state=None):
         """Encode source frames to latent tokens."""
-        assert False, 'This method is not implemented yet.'
-        source_tokens = self.tokenizer(source_frames)
-        *b, num_source_frames, _, _, source_tokens_d = source_tokens.shape
+        if rng_key is None:
+            rng_key = self.make_rng('default')
+
+        # Tokenize source and target frames
+        source_tokens = self.tokenizer(source_frames, channel_inds)
+        *b, num_source_frames, source_tokens_c, source_tokens_h, source_tokens_w, source_tokens_d = source_tokens.shape
+
+        channel_embs = self.channel_embeddings[channel_inds]
+        source_tokens = source_tokens + channel_embs[:, None, :, None, None, :]
 
         # Flatten source tokens
-        source_tokens = einops.rearrange(source_tokens, '... h w D -> ... (h w) D')
-
-        # Append cls token to source
-        cls_token = jnp.broadcast_to(
-            self.cls_token, b + [num_source_frames, 1, self.cls_token.shape[-1]]
-        )
-        source_tokens = jnp.concatenate([cls_token, source_tokens], axis=-2)
+        source_tokens = einops.rearrange(source_tokens, '... c h w D -> ... (c h w) D')
 
         # Encode source frames
         num_source_tokens = source_tokens.shape[-2]
@@ -580,7 +581,9 @@ class VideoSiamMAE(nn.Module):
             all_encoded_source_tokens.append(encoded)
         encoded_source_tokens = jnp.stack(all_encoded_source_tokens, axis=-3)
 
-        return encoded_source_tokens
+        features = einops.rearrange(encoded_source_tokens, '... (c h w) D -> ... c h w D', c=source_tokens_c, h=source_tokens_h, w=source_tokens_w)
+
+        return features
 
     def __call__(
         self,
@@ -589,7 +592,6 @@ class VideoSiamMAE(nn.Module):
         channel_inds,
         target_deltas=None,
         state=None,
-        src_channel_drop: bool = False,
         rng_key=None,
     ):
         """Full forward pass with encoder + decoder for masked reconstruction.
@@ -601,7 +603,6 @@ class VideoSiamMAE(nn.Module):
 
           target_deltas: Optional temporal deltas, shape (B, TT), integer.
           state: Optional recurrent state from previous call.
-          src_channel_drop: Whether to drop source channels.
           rng_key: JAX random key for masking.
 
         Returns:
@@ -611,20 +612,9 @@ class VideoSiamMAE(nn.Module):
         if rng_key is None:
             rng_key = self.make_rng('default')
 
-        if src_channel_drop:
-            rng_key, subkey = jax.random.split(rng_key)
-            B, c = channel_inds.shape
-            drop_idx = jax.random.randint(subkey, (B,), 0, c)
-            keep_mask = jnp.ones((B, c), dtype=bool)
-            keep_mask = keep_mask.at[jnp.arange(B), drop_idx].set(False)
-
-            keep_idx = jnp.argsort(~keep_mask, axis=1, stable=True)[:, :-1]
-
-            src_channel_inds = jnp.take_along_axis(channel_inds, keep_idx, axis=1)
-
         # Tokenize source and target frames
-        source_tokens = self.tokenizer(source_frames, src_channel_inds)
-        *_, num_source_frames, source_tokens_c, source_tokens_h, source_tokens_w, source_tokens_d = source_tokens.shape
+        source_tokens = self.tokenizer(source_frames, channel_inds)
+        *_, num_source_frames, _, _, _, source_tokens_d = source_tokens.shape
         target_tokens = self.tokenizer(target_frames, channel_inds)
         *b, num_target_frames, target_tokens_c, target_tokens_h, target_tokens_w, target_tokens_d = (
             target_tokens.shape
@@ -634,20 +624,23 @@ class VideoSiamMAE(nn.Module):
         source_tokens = source_tokens + channel_embs[:, None, :, None, None, :]
         target_tokens = target_tokens + channel_embs[:, None, :, None, None, :]
 
-        for i in range(target_tokens_c):
-            target_tokens = target_tokens.at[..., i, :, :, :].add(
-                self.channel_embeddings[channel_inds[..., i]]
-            )
-
         # Flatten source tokens
         source_tokens = einops.rearrange(source_tokens, '... c h w D -> ... (c h w) D')
 
-        # Mask target tokens
+        if self.src_masking_ratio > 0.0:
+            # Mask source tokens (masks are shared across the time dimension)
+            rng_key, src_mask_key = jax.random.split(rng_key)
+            source_tokens, _, _ = random_masking_with_shared_dim(
+                src_mask_key, source_tokens, self.src_masking_ratio
+            )
+
+        # Mask target tokens (masks are shared across the channel dimension)
         target_tokens_flat = einops.rearrange(
             target_tokens, '... h w D -> ... (h w) D'
         )
-        visible_target, inds_restore, mask = random_masking(
-            rng_key, target_tokens_flat, self.masking_ratio
+        rng_key, tgt_mask_key = jax.random.split(rng_key)
+        visible_target, inds_restore, mask = random_masking_with_shared_dim(
+            tgt_mask_key, target_tokens_flat, self.tgt_masking_ratio
         )
         visible_target = einops.rearrange(
             visible_target, '... c hw D -> ... (c hw) D'
@@ -678,13 +671,6 @@ class VideoSiamMAE(nn.Module):
                 encoded_source_tokens[..., t, :, :], state)
             all_encoded_source_tokens.append(encoded)
         encoded_source_tokens = jnp.stack(all_encoded_source_tokens, axis=-3)
-        features = einops.rearrange(
-            encoded_source_tokens, 
-            '... (c h w) D -> ... c h w D', 
-            c=source_tokens_c, 
-            h=source_tokens_h, 
-            w=source_tokens_w
-        )
 
         # Encode target frames
         num_target_tokens = visible_target.shape[-2]
@@ -792,7 +778,6 @@ class VideoSiamMAE(nn.Module):
         return {
             'reconstructed': reconstructed,
             'mask': mask,
-            'features': features,
             'state': state,
         }
 
