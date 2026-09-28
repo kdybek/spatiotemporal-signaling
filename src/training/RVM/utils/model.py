@@ -642,6 +642,7 @@ class VideoSiamMAE(nn.Module):
         visible_target, inds_restore, mask = random_masking_with_shared_dim(
             tgt_mask_key, target_tokens_flat, self.tgt_masking_ratio
         )
+        *_, visible_target_c, visible_target_hw, _ = visible_target.shape
         visible_target = einops.rearrange(
             visible_target, '... c hw D -> ... (c hw) D'
         )
@@ -685,13 +686,10 @@ class VideoSiamMAE(nn.Module):
         )
 
         # Embed target tokens for decoder
-        embedded_target_tokens = self.decoder_embedder(encoded_targets)
-
-        # Separate cls token
-        unmasked_tokens = embedded_target_tokens
+        unmasked_tokens = self.decoder_embedder(encoded_targets)
 
         unmasked_tokens = einops.rearrange(
-            unmasked_tokens, '... (c hw) D -> ... c hw D', c=target_tokens_c, hw=target_tokens_h * target_tokens_w
+            unmasked_tokens, '... (c hw) D -> ... c hw D', c=visible_target_c, hw=visible_target_hw
         )
 
         # Concat unmasked tokens with mask tokens and restore order
@@ -699,7 +697,7 @@ class VideoSiamMAE(nn.Module):
             self.mask_token,
             b + [
                 num_target_frames,
-                target_tokens_c,
+                visible_target_c,
                 inds_restore.shape[-2] - unmasked_tokens.shape[-2],
                 self.mask_token.shape[-1],
             ],
@@ -724,7 +722,7 @@ class VideoSiamMAE(nn.Module):
         # Build positional embedding for decoder tokens
         latent_posenc_shape = (
             1, target_tokens_h, target_tokens_w,
-            embedded_target_tokens.shape[-1],
+            unmasked_tokens.shape[-1],
         )
         latent_posenc = self.latent_posenc(latent_posenc_shape)
         latent_posenc = jnp.reshape(
