@@ -509,6 +509,7 @@ class AttentionPoolingClassifier(nn.Module):
             attention_weights: (..., N)
         """
         pooled, attention_weights = AttentionPooling()(tokens)
+        pooled = nn.LayerNorm()(pooled)
         logits = nn.Dense(
             features=self.num_classes,
             kernel_init=nn.initializers.xavier_uniform(),
