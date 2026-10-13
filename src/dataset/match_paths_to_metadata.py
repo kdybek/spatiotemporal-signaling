@@ -182,9 +182,9 @@ def get_data_from_exp(exp_path, exp_metadata):
     data = []
 
     exp_desc_file = exp_path / "experimentDescription.csv"
-    tiff_dir = exp_path / "TIFFs"
+    tiff_dirs = [exp_path / "TIFFs", exp_path / "TIFFs_PartA", exp_path / "TIFFs_PartB"]
 
-    if not tiff_dir.exists():
+    if not any(tiff_dir.exists() for tiff_dir in tiff_dirs):
         raise FileNotFoundError("TIFF directory not found.")
 
     if not exp_desc_file.exists():
@@ -195,8 +195,10 @@ def get_data_from_exp(exp_path, exp_metadata):
     exp_desc_df, exp_desc_df_key = preprocess_exp_desc_df(exp_desc_df, exp_path)
 
     tiffs = []
-    for tiff_path in tiff_dir.glob("*.tif*"):
-        tiffs.append(preprocess_tiff(tiff_path, exp_desc_df_key))
+    for tiff_dir in tiff_dirs:
+        if tiff_dir.exists():
+            for tiff_path in tiff_dir.glob("*.tif*"):
+                tiffs.append(preprocess_tiff(tiff_path, exp_desc_df_key))
 
     for _, row in exp_desc_df.iterrows():
         row_desc = tuple(row[c] for c in exp_desc_df_key)
