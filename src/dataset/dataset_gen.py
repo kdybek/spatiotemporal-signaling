@@ -100,12 +100,11 @@ def throw_out_frames(video, metadata, acq_freq):
 def stratified_split(items, train_fraction, seed):
     metas = [item["Metadata"] for item in items]
     layer_keys = ["Path", "Cell_type", "Inhibitor"]
-    valid_items_inds = [i for i, meta in enumerate(metas) if all(key in meta for key in layer_keys)]
-    invalid_item_inds = [i for i, meta in enumerate(metas) if not all(key in meta for key in layer_keys)]
+
+    assert all(all(key in meta for key in layer_keys) for meta in metas), "All items must have 'Path', 'Cell_type', and 'Inhibitor' keys in Metadata"
 
     layers_inds = {}
-    for i in valid_items_inds:
-        meta = metas[i]
+    for i, meta in enumerate(metas):
         layer_key = tuple(meta[key] for key in layer_keys)
         if layer_key not in layers_inds:
             layers_inds[layer_key] = []
@@ -114,12 +113,15 @@ def stratified_split(items, train_fraction, seed):
     train_items = []
     val_items = []
     rng = np.random.default_rng(seed)
-    for layer_inds in itertools.chain(layers_inds.values(), [invalid_item_inds]):
+    for layer_inds in layers_inds.values():
         layer = [items[i] for i in layer_inds]
         rng.shuffle(layer)
-        split_idx = max(int(len(layer) * (1 - train_fraction)), 1)  # Take at least one item for the validation split
-        val_items.extend(layer[:split_idx])
-        train_items.extend(layer[split_idx:])
+        n_val = max(round(len(layer) * (1 - train_fraction)), 1)  # Take at least one item for the validation split
+
+        logging.info(f"Layer {layer[0]['Metadata']['Path']}, {layer[0]['Metadata']['Cell_type']}, {layer[0]['Metadata']['Inhibitor']}: {len(layer)} items, {n_val} for validation, {len(layer) - n_val} for training")
+
+        val_items.extend(layer[:n_val])
+        train_items.extend(layer[n_val:])
 
     return train_items, val_items
 
