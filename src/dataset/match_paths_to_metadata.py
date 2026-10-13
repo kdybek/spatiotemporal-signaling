@@ -194,40 +194,40 @@ def get_data_from_exp(exp_path, exp_metadata):
 
     exp_desc_df, exp_desc_df_key = preprocess_exp_desc_df(exp_desc_df, exp_path)
 
-    tiffs = []
     for tiff_dir in tiff_dirs:
         if tiff_dir.exists():
+            tiffs = []
             for tiff_path in tiff_dir.glob("*.tif*"):
                 tiffs.append(preprocess_tiff(tiff_path, exp_desc_df_key))
 
-    for _, row in exp_desc_df.iterrows():
-        row_desc = tuple(row[c] for c in exp_desc_df_key)
-        matching_tiff_paths = [tiff["Path"]
-                               for tiff in tiffs if tiff["Desc"] == row_desc]
+            for _, row in exp_desc_df.iterrows():
+                row_desc = tuple(row[c] for c in exp_desc_df_key)
+                matching_tiff_paths = [tiff["Path"]
+                                    for tiff in tiffs if tiff["Desc"] == row_desc]
 
-        if len(matching_tiff_paths) == 0:
-            if row.get("Site_added", False):  # If I added "Site" to the description it can not match to anything
-                continue
-            else:
-                logging.warning(f"No TIFF found matching description {
-                                row_desc} for experiment at {exp_path}.")
-                continue
+                if len(matching_tiff_paths) == 0:
+                    if row.get("Site_added", False):  # If I added "Site" to the description it can not match to anything
+                        continue
+                    else:
+                        logging.warning(f"No TIFF found matching description {
+                                        row_desc} for experiment at {exp_path}.")
+                        continue
 
-        try:
-            channel_mapping, channel_metadata = process_matched_tiffs(
-                matching_tiff_paths, exp_metadata)
-        except Exception as e:
-            logging.warning(f"Error processing matched TIFFs for description {
-                            row_desc} in experiment at {exp_path}: {e}")
-            continue
+                try:
+                    channel_mapping, channel_metadata = process_matched_tiffs(
+                        matching_tiff_paths, exp_metadata)
+                except Exception as e:
+                    logging.warning(f"Error processing matched TIFFs for description {
+                                    row_desc} in experiment at {exp_path}: {e}")
+                    continue
 
-        metadata = row.dropna().to_dict()
-        metadata.update(exp_metadata)
-        metadata.update(channel_metadata)
+                metadata = row.dropna().to_dict()
+                metadata.update(exp_metadata)
+                metadata.update(channel_metadata)
 
-        entry = {"Metadata": metadata}
-        entry.update(channel_mapping)
-        data.append(entry)
+                entry = {"Metadata": metadata}
+                entry.update(channel_mapping)
+                data.append(entry)
 
     return data
 
