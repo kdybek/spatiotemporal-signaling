@@ -187,6 +187,7 @@ def main(_):
             params,
             FLAGS.src_frames,
             FLAGS.tgt_frames,
+            FLAGS.channel_names.split(),
             FLAGS.src_sample_prefix,
             FLAGS.min_offset,
             FLAGS.max_offset,
