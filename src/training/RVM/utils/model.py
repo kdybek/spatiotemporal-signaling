@@ -886,7 +886,7 @@ def get_rvm(num_channels, src_masking_ratio, tgt_masking_ratio, variant='M'):
         decoder_embedder=nn.Dense(512),
         delta_embedder=nn.Dense(512),
         latent_posenc=SincosPosEmb(),
-        detokenizer=MultiChannelDetokenizer(patch_size=(16, 16), num_features=num_channels),
+        detokenizer=MultiChannelDetokenizer(patch_size=(16, 16), num_channels=num_channels),
         decoder_emb_dim=512,
         src_masking_ratio=src_masking_ratio,
         tgt_masking_ratio=tgt_masking_ratio,
