@@ -819,7 +819,7 @@ class VideoSiamMAE(nn.Module):
             ],
         )
         mask = jnp.reshape(
-            mask, b + [num_target_frames, target_tokens_h, target_tokens_w, 1]
+            mask, b + [num_target_frames, target_tokens_c, target_tokens_h, target_tokens_w, 1]
         )
 
         # Detokenize to pixel space
