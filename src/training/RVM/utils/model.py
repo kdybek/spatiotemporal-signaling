@@ -832,7 +832,7 @@ class VideoSiamMAE(nn.Module):
         }
 
 
-def get_rvm(num_channels, masking_ratio, variant='B'):
+def get_rvm(num_channels, masking_ratio, variant='M'):
     if variant == 'L':
         encoder_variant = 'L'
         embed_dim = 1024
@@ -840,6 +840,10 @@ def get_rvm(num_channels, masking_ratio, variant='B'):
     elif variant == 'B':
         encoder_variant = 'B'
         embed_dim = 768
+        rnn_heads = 12
+    elif variant == 'M':
+        encoder_variant = 'M'
+        embed_dim = 512
         rnn_heads = 12
     elif variant == 'S':
         encoder_variant = 'S'

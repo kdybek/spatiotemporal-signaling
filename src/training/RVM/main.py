@@ -50,7 +50,7 @@ flags.DEFINE_integer('max_offset', 48,
                      'Maximum offset between source and target frames.')
 flags.DEFINE_float('masking_ratio', 0.95,
                    'Ratio of target tokens to mask during training.')
-flags.DEFINE_string('rvm_variant', 'B', 'Variant of the RVM to use.')
+flags.DEFINE_string('rvm_variant', 'M', 'Variant of the RVM to use.')
 
 flags.DEFINE_string('transforms', 'arcsinh butterworth percentile_norm',
                     'Space-separated list of transforms to apply to the videos. Supported: percentile_norm, arcsinh, log1p, butterworth.')
