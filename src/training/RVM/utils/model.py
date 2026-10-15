@@ -823,7 +823,7 @@ class VideoSiamMAE(nn.Module):
         )
 
         # Detokenize to pixel space
-        reconstructed = self.detokenizer(reconstructed)
+        reconstructed = self.detokenizer(reconstructed, channel_inds)
 
         return {
             'reconstructed': reconstructed,
