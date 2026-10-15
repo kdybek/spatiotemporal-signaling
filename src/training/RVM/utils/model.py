@@ -855,7 +855,9 @@ def get_rvm(num_channels, src_masking_ratio, tgt_masking_ratio, variant='M'):
 
     return VideoSiamMAE(
         tokenizer=MultiChannelTokenizer(
-            patch_embedding=PatchEmbedding(patch_size=[1, 16, 16], num_features=embed_dim),
+            num_channels=num_channels,
+            patch_size=[1, 16, 16],
+            num_features=embed_dim,
             posenc=SincosPosEmb(base_token_shape=[16, 16]),
         ),
         encoder=Transformer.from_variant_str(
