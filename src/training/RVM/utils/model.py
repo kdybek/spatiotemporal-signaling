@@ -854,7 +854,7 @@ def get_rvm(num_channels, src_masking_ratio, tgt_masking_ratio, variant='M'):
         raise ValueError(f'Unknown variant: {variant}')
 
     return VideoSiamMAE(
-        tokenizer=Tokenizer(
+        tokenizer=MultiChannelTokenizer(
             patch_embedding=PatchEmbedding(patch_size=[1, 16, 16], num_features=embed_dim),
             posenc=SincosPosEmb(base_token_shape=[16, 16]),
         ),
@@ -884,7 +884,7 @@ def get_rvm(num_channels, src_masking_ratio, tgt_masking_ratio, variant='M'):
         decoder_embedder=nn.Dense(512),
         delta_embedder=nn.Dense(512),
         latent_posenc=SincosPosEmb(),
-        detokenizer=Detokenizer(patch_size=(16, 16), num_features=num_channels),
+        detokenizer=MultiChannelDetokenizer(patch_size=(16, 16), num_features=num_channels),
         decoder_emb_dim=512,
         src_masking_ratio=src_masking_ratio,
         tgt_masking_ratio=tgt_masking_ratio,
