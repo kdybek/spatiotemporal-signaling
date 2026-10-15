@@ -48,7 +48,9 @@ flags.DEFINE_integer('min_offset', 4,
                      'Minimum offset between source and target frames.')
 flags.DEFINE_integer('max_offset', 48,
                      'Maximum offset between source and target frames.')
-flags.DEFINE_float('masking_ratio', 0.95,
+flags.DEFINE_float('src_masking_ratio', 0.0,
+                   'Ratio of source tokens to mask during training.')
+flags.DEFINE_float('tgt_masking_ratio', 0.95,
                    'Ratio of target tokens to mask during training.')
 flags.DEFINE_string('rvm_variant', 'M', 'Variant of the RVM to use.')
 
@@ -162,7 +164,8 @@ def main(_):
 
     model = get_rvm(
         num_channels=len(FLAGS.channel_names.split()),
-        masking_ratio=FLAGS.masking_ratio,
+        src_masking_ratio=FLAGS.src_masking_ratio,
+        tgt_masking_ratio=FLAGS.tgt_masking_ratio,
         variant=FLAGS.rvm_variant,
     )
 

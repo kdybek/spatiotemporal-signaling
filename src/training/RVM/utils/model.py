@@ -832,7 +832,8 @@ class VideoSiamMAE(nn.Module):
         }
 
 
-def get_rvm(num_channels, masking_ratio, variant='M'):
+
+def get_rvm(num_channels, src_masking_ratio, tgt_masking_ratio, variant='M'):
     if variant == 'L':
         encoder_variant = 'L'
         embed_dim = 1024
@@ -885,6 +886,7 @@ def get_rvm(num_channels, masking_ratio, variant='M'):
         latent_posenc=SincosPosEmb(),
         detokenizer=Detokenizer(patch_size=(16, 16), num_features=num_channels),
         decoder_emb_dim=512,
-        masking_ratio=masking_ratio,
+        src_masking_ratio=src_masking_ratio,
+        tgt_masking_ratio=tgt_masking_ratio,
         num_channels=num_channels,
     )
