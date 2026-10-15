@@ -788,7 +788,7 @@ class VideoSiamMAE(nn.Module):
         unshuffled_tokens += latent_posenc
 
         unshuffled_tokens = einops.rearrange(
-            unshuffled_tokens, '... hw D -> ... h w D', h=target_tokens_h, w=target_tokens_w
+            unshuffled_tokens, '... (h w) D -> ... h w D', h=target_tokens_h, w=target_tokens_w
         )
         unshuffled_tokens = einops.rearrange(
             unshuffled_tokens, '... c h w D -> ... (c h w) D'
