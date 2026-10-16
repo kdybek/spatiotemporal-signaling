@@ -706,11 +706,10 @@ class VideoSiamMAE(nn.Module):
         )
 
         # Scan encoded source tokens through time with RNN core
-        if state is None:
-            state = self.rnn_core.initializer(
-                encoded_source_tokens[..., 0, :, :],
-                batch_shape=tuple(b),
-            )
+        state = self.rnn_core.initializer(
+            encoded_source_tokens[..., 0, :, :],
+            batch_shape=tuple(b),
+        )
 
         all_encoded_source_tokens = []
         for t in range(num_source_frames):
