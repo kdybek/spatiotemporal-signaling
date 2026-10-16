@@ -569,18 +569,18 @@ class VideoSiamMAE(nn.Module):
     tokenizer: nn.Module
     encoder: nn.Module
     rnn_core: nn.Module
-    latent_emb_dim: int = 384
+    latent_emb_dim: int
 
     # Decoder
-    decoder: nn.Module | None = None
-    decoder_embedder: nn.Module | None = None
-    delta_embedder: nn.Module | None = None
-    latent_posenc: nn.Module | None = None
-    detokenizer: nn.Module | None = None
-    decoder_emb_dim: int = 512
-    src_masking_ratio: float = 0.0
-    tgt_masking_ratio: float = 0.95
-    num_channels: int = 4
+    decoder: nn.Module
+    decoder_embedder: nn.Module
+    delta_embedder: nn.Module
+    latent_posenc: nn.Module
+    detokenizer: nn.Module
+    decoder_emb_dim: int
+    src_masking_ratio: float
+    tgt_masking_ratio: float
+    num_channels: int
 
     def setup(self):
         self.channel_embeddings = self.param(
@@ -592,10 +592,8 @@ class VideoSiamMAE(nn.Module):
             self.mask_token = self.param('mask_token', nn.initializers.normal(
                 stddev=0.02), (1, self.decoder_emb_dim))
 
-    def encode(self, source_frames, channel_inds, state=None):
+    def encode(self, source_frames, channel_inds):
         """Encode source frames to latent tokens."""
-        if rng_key is None:
-            rng_key = self.make_rng('default')
 
         # Tokenize source and target frames
         source_tokens = self.tokenizer(source_frames, channel_inds)
@@ -620,11 +618,10 @@ class VideoSiamMAE(nn.Module):
         )
 
         # Scan encoded source tokens through time with RNN core
-        if state is None:
-            state = self.rnn_core.initializer(
-                encoded_source_tokens[..., 0, :, :],
-                batch_shape=tuple(b),
-            )
+        state = self.rnn_core.initializer(
+            encoded_source_tokens[..., 0, :, :],
+            batch_shape=tuple(b),
+        )
 
         all_encoded_source_tokens = []
         for t in range(num_source_frames):
@@ -642,9 +639,8 @@ class VideoSiamMAE(nn.Module):
         source_frames,
         target_frames,
         channel_inds,
-        target_deltas=None,
-        state=None,
-        rng_key=None,
+        target_deltas,
+        rng_key,
     ):
         """Full forward pass with encoder + decoder for masked reconstruction.
 
@@ -661,8 +657,6 @@ class VideoSiamMAE(nn.Module):
           Dictionary with 'reconstructed', 'mask', 'features', 'state'.
         """
         assert self.decoder is not None, 'Decoder must be provided for reconstruction.'
-        if rng_key is None:
-            rng_key = self.make_rng('default')
 
         # Tokenize source and target frames
         source_tokens = self.tokenizer(source_frames, channel_inds)

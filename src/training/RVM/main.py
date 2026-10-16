@@ -84,9 +84,10 @@ def initialize_model(model, rng_key):
                          FLAGS.clip_size, num_channels), dtype=jnp.float32)
     dummy_tgt = jnp.ones((1, FLAGS.tgt_frames, FLAGS.clip_size, FLAGS.clip_size,
                          num_channels), dtype=jnp.float32)
+    dummy_channel_inds = jnp.arange(num_channels, dtype=jnp.int32)[None, :]
     dummy_deltas = jnp.zeros((1, FLAGS.tgt_frames), dtype=jnp.int32)
 
-    params = model.init(rng_key, dummy_src, dummy_tgt, dummy_deltas)['params']
+    params = model.init(rng_key, dummy_src, dummy_tgt, dummy_channel_inds, dummy_deltas, rng_key)['params']
     return params
 
 
