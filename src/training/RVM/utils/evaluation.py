@@ -69,18 +69,18 @@ def compute_outputs(
     targets = []
     channel_inds = []
     loader = batch_iterator(test_dataset, batch_size=batch_size)
-    for clips, channel_inds, _ in tqdm(loader, desc='Evaluation'):
+    for clips, channel_inds_, _ in tqdm(loader, desc='Evaluation'):
         src, tgt, offsets = prepare_rvm_src_tgt_pairs(
             clips, src_frames, tgt_frames, src_sample_prefix, min_offset, max_offset
         )
 
         eval_key, rng_key = jax.random.split(rng_key)
-        output = forward(src, tgt, channel_inds, offsets, rng=eval_key)
+        output = forward(src, tgt, channel_inds_, offsets, rng=eval_key)
 
         reconstruced.extend(np.array(output["reconstructed"]))
         masks.extend(np.array(output["mask"]))
         targets.extend(np.array(output["targets"]))
-        channel_inds.extend(np.array(channel_inds))
+        channel_inds.extend(np.array(channel_inds_))
 
     reconstruced = np.array(reconstruced)
     masks = np.array(masks)
