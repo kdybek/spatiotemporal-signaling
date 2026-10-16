@@ -640,7 +640,6 @@ class VideoSiamMAE(nn.Module):
         target_frames,
         channel_inds,
         target_deltas,
-        rng_key,
     ):
         """Full forward pass with encoder + decoder for masked reconstruction.
 
@@ -657,6 +656,7 @@ class VideoSiamMAE(nn.Module):
           Dictionary with 'reconstructed', 'mask', 'features', 'state'.
         """
         assert self.decoder is not None, 'Decoder must be provided for reconstruction.'
+        rng_key = self.make_rng("default")
 
         # Tokenize source and target frames
         source_tokens = self.tokenizer(source_frames, channel_inds)

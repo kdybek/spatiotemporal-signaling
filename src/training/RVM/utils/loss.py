@@ -21,7 +21,7 @@ def update_model(
             targets,
             channel_inds,
             target_deltas,
-            rng_key,
+            rngs={"default": rng_key},
         )
 
         reconstructed = jnp.take_along_axis(output["reconstructed"], channel_inds[:, None, None, None, :], axis=-1)
