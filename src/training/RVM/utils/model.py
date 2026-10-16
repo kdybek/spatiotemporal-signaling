@@ -544,7 +544,7 @@ def random_masking_with_shared_dim(rng_key, tokens, mask_ratio):
         batch_shape + (n_tokens,)
     )[..., None, :, None]
 
-    inds = jax.random.permutation(rng_key, inds, axis=-2)
+    inds = jax.random.permutation(rng_key, inds, axis=-2, independent=True)
 
     inds = jnp.broadcast_to(inds, batch_shape + (shared_dim, n_tokens, 1))
 

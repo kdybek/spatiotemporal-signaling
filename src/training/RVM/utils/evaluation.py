@@ -39,7 +39,7 @@ def compute_outputs(
             targets,
             channel_inds,
             target_deltas,
-            rngs={"default": rng},
+            rng,
         )
 
         mask = jax.image.resize(
