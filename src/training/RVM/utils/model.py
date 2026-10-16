@@ -464,7 +464,9 @@ class MultiChannelDetokenizer(nn.Module):
             )
             channels.append(detokenized)
 
-        return jnp.stack(channels, axis=-1)
+        detokenized = jnp.stack(channels, axis=-1)
+
+        return detokenized
 
 
 class AttentionPooling(nn.Module):
@@ -810,6 +812,7 @@ class VideoSiamMAE(nn.Module):
         mask = jnp.reshape(
             mask, b + [num_target_frames, target_tokens_c, target_tokens_h, target_tokens_w, 1]
         )
+        mask = einops.rearrange(mask, '... c h w 1 -> ... h w c')
 
         # Detokenize to pixel space
         reconstructed = self.detokenizer(reconstructed, channel_inds)

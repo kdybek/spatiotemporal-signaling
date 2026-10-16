@@ -42,21 +42,25 @@ def compute_outputs(
             rngs={"default": rng},
         )
 
-        mask = jax.image.resize(
-            output["mask"],
-            targets.shape[:-1] + (1,),
-            method="nearest",
-        )
-        # Repeat mask for each channel
-        mask = jnp.repeat(mask, targets.shape[-1], axis=-1)
+        assert output["mask"].shape[-1] == channel_inds.shape[-1]
 
-        output["mask"] = mask
         output["reconstructed"] = jnp.take_along_axis(
             output["reconstructed"], channel_inds[:, None, None, None, :], axis=-1
         )
         output["targets"] = jnp.take_along_axis(
             targets, channel_inds[:, None, None, None, :], axis=-1
         )
+
+        assert output["reconstructed"].shape[-3] % output["mask"].shape[-3] == 0, "Target height must be divisible by mask height"
+        assert output["reconstructed"].shape[-2] % output["mask"].shape[-2] == 0, "Target width must be divisible by mask width"
+
+        patch_scaling_factor_h = output["reconstructed"].shape[-3] // output["mask"].shape[-3]
+        patch_scaling_factor_w = output["reconstructed"].shape[-2] // output["mask"].shape[-2]
+
+        mask = output["mask"].repeat(patch_scaling_factor_h, axis=-3)
+        mask = mask.repeat(patch_scaling_factor_w, axis=-2)
+
+        output["mask"] = mask
 
         return output
 
