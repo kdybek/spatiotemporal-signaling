@@ -764,12 +764,9 @@ class VideoSiamMAE(nn.Module):
         unshuffled_tokens = unshuffled_tokens + channel_embs[:, None, :, None, :]
 
         # Encode target deltas
-        if self.delta_embedder is not None and target_deltas is not None:
-            target_deltas_onehot = jax.nn.one_hot(target_deltas, 64, axis=-1)
-            delta_tokens = self.delta_embedder(
-                target_deltas_onehot)[..., None, None, :]
-        else:
-            delta_tokens = None
+        target_deltas_onehot = jax.nn.one_hot(target_deltas, 64, axis=-1)
+        delta_tokens = self.delta_embedder(
+            target_deltas_onehot)[..., None, None, :]
 
         # Build positional embedding for decoder tokens
         latent_posenc_shape = (
@@ -783,8 +780,7 @@ class VideoSiamMAE(nn.Module):
         )
         latent_posenc = jnp.broadcast_to(latent_posenc, unshuffled_tokens.shape)
 
-        if delta_tokens is not None:
-            unshuffled_tokens += delta_tokens
+        unshuffled_tokens += delta_tokens
         unshuffled_tokens += latent_posenc
 
         unshuffled_tokens = einops.rearrange(
