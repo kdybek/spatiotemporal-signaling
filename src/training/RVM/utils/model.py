@@ -589,10 +589,9 @@ class VideoSiamMAE(nn.Module):
             'channel_embeddings',
             nn.initializers.normal(stddev=0.02),
             (self.num_channels, self.latent_emb_dim),
-        )
-        if self.decoder is not None:
-            self.mask_token = self.param('mask_token', nn.initializers.normal(
-                stddev=0.02), (1, self.decoder_emb_dim))
+        )   
+        self.channel_mask_tokens = self.param('mask_token', nn.initializers.normal(
+            stddev=0.02), (self.num_channels, self.decoder_emb_dim))
 
     def encode(self, source_frames, channel_inds):
         """Encode source frames to latent tokens."""
@@ -741,22 +740,20 @@ class VideoSiamMAE(nn.Module):
 
         # Concat unmasked tokens with mask tokens and restore order
         mask_tokens = jnp.broadcast_to(
-            self.mask_token,
+            self.channel_mask_tokens[None, None, :, None, :],
             b + [
                 num_target_frames,
-                visible_target_c,
+                self.num_channels,
                 inds_restore.shape[-2] - unmasked_tokens.shape[-2],
                 self.mask_token.shape[-1],
             ],
         )
+        mask_tokens = jnp.take_along_axis(mask_tokens, channel_inds[:, None, :, None, None], axis=2)
         shuffled_tokens = jnp.concatenate([unmasked_tokens, mask_tokens], axis=-2)
 
         unshuffled_tokens = jnp.take_along_axis(
             shuffled_tokens, inds_restore, axis=-2
         )
-
-        # Add channel embeddings to unshuffled tokens
-        unshuffled_tokens = unshuffled_tokens + channel_embs[:, None, :, None, :]
 
         # Encode target deltas
         target_deltas_onehot = jax.nn.one_hot(target_deltas, 64, axis=-1)
