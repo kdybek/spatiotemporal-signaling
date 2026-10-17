@@ -87,8 +87,6 @@ def compute_outputs(
     targets = np.array(targets)
     channel_inds = np.array(channel_inds)
 
-    print(f"Reconstructed shape: {reconstruced.shape}, Masks shape: {masks.shape}, Targets shape: {targets.shape}, Channel indices shape: {channel_inds.shape}")
-
     return {
         "reconstructed": reconstruced,
         "masks": masks,

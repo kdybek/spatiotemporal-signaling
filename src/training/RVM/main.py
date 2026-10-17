@@ -52,7 +52,7 @@ flags.DEFINE_float('src_masking_ratio', 0.0,
                    'Ratio of source tokens to mask during training.')
 flags.DEFINE_float('tgt_masking_ratio', 0.95,
                    'Ratio of target tokens to mask during training.')
-flags.DEFINE_string('rvm_variant', 'M', 'Variant of the RVM to use.')
+flags.DEFINE_string('rvm_variant', 'S', 'Variant of the RVM to use.')
 
 flags.DEFINE_string('transforms', 'arcsinh butterworth percentile_norm',
                     'Space-separated list of transforms to apply to the videos. Supported: percentile_norm, arcsinh, log1p, butterworth.')

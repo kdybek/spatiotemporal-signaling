@@ -837,11 +837,15 @@ def get_rvm(num_channels, src_masking_ratio, tgt_masking_ratio, variant='M'):
     elif variant == 'M':
         encoder_variant = 'M'
         embed_dim = 512
-        rnn_heads = 12
+        rnn_heads = 8
     elif variant == 'S':
         encoder_variant = 'S'
         embed_dim = 384
-        rnn_heads = 8
+        rnn_heads = 6
+    elif variant == 'Ti':
+        encoder_variant = 'Ti'
+        embed_dim = 192
+        rnn_heads = 3
     else:
         raise ValueError(f'Unknown variant: {variant}')
 
