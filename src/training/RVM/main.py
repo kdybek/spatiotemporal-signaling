@@ -31,8 +31,10 @@ flags.DEFINE_string('save_dir', 'checkpoints',
                     'Directory to save model checkpoints.')
 
 flags.DEFINE_float('learning_rate', 1e-4, 'Learning rate for the optimizer.')
-flags.DEFINE_integer('batch_size', 16,
+flags.DEFINE_integer('batch_size', 4,
                      'Batch size for training and evaluation.')
+flags.DEFINE_integer('grad_accumulation_steps', 4,
+                     'Number of steps to accumulate gradients before updating the model.')
 flags.DEFINE_integer('clip_size', 256, 'Height and width of input images.')
 flags.DEFINE_integer('clip_frames', 64, 'Number of frames in each video clip.')
 flags.DEFINE_float('acq_freq', 15.0,
@@ -95,6 +97,7 @@ def create_optimizer(
     base_lr,
     warmup_steps,
     total_steps,
+    grad_accumulation_steps,
 ):
     warmup_schedule = optax.linear_schedule(
         init_value=0.0,
@@ -117,12 +120,18 @@ def create_optimizer(
         ],
     )
 
-    optimizer = optax.adamw(
+    adamw = optax.adamw(
         learning_rate=schedule,
         weight_decay=0.05,
         b1=0.9,
         b2=0.95,
         eps=1e-8,
+    )
+
+    optimizer = optax.chain(
+        optax.clip_by_global_norm(1.0),
+        adamw,
+        optax.apply_every(k=grad_accumulation_steps)
     )
 
     return optimizer
@@ -177,6 +186,7 @@ def main(_):
         base_lr=FLAGS.learning_rate,
         warmup_steps=int(0.05 * FLAGS.steps),
         total_steps=FLAGS.steps,
+        grad_accumulation_steps=FLAGS.grad_accumulation_steps,
     )
     opt_state = optimizer.init(params)
 
