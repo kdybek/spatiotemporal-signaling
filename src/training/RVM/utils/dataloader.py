@@ -198,6 +198,27 @@ class ZarrVideoDataset():
         return video, channel_inds, metadata
 
 
+# Usefull for debugging
+class DummyDataset():
+    def __init__(self, clip_frames, clip_size, acq_freq, channel_names_list):
+        self.clip_frames = clip_frames
+        self.clip_size = clip_size
+        self.acq_freq = acq_freq
+        self.channel_names_list = channel_names_list
+
+    def __len__(self):
+        return 8  # Arbitrary length for the dummy dataset
+
+    def __getitem__(self, idx):
+        # Generate a dummy video clip with random values
+        video = np.random.rand(self.clip_frames, len(self.channel_names_list), self.clip_size, self.clip_size).astype("float32")
+        video = np.clip(video, 0, 1)
+        channel_inds = np.arange(len(self.channel_names_list) - 1)  # Dummy channel indices
+        metadata = {"Dummy": True}  # Dummy metadata
+
+        return video, channel_inds, metadata
+
+
 def create_train_val_datasets(
     zarr_path,
     clip_frames,
@@ -210,6 +231,8 @@ def create_train_val_datasets(
     random_crop_train=True,
     random_crop_val=False
 ):
+    # return DummyDataset(clip_frames, clip_size, acq_freq, channel_names_list), DummyDataset(clip_frames, clip_size, acq_freq, channel_names_list)
+    
     root = zarr.open(zarr_path, mode="r")
     train_root = root["train"]
     val_root = root["val"]

@@ -87,6 +87,8 @@ def compute_outputs(
     targets = np.array(targets)
     channel_inds = np.array(channel_inds)
 
+    print(f"Reconstructed shape: {reconstruced.shape}, Masks shape: {masks.shape}, Targets shape: {targets.shape}, Channel indices shape: {channel_inds.shape}")
+
     return {
         "reconstructed": reconstruced,
         "masks": masks,
@@ -223,7 +225,17 @@ def full_evaluation(
     channel_inds = outputs["channel_inds"]
 
     metrics = {}
-    metrics.update(evaluate_loss(reconstructed, targets, masks))
-    metrics.update(visualize_reconstructions(reconstructed, targets, channel_inds, channel_names_list, masks))
+    metrics.update(evaluate_loss(
+        reconstructed=reconstructed,
+        targets=targets,
+        masks=masks
+    ))
+    metrics.update(visualize_reconstructions(
+        reconstructed=reconstructed,
+        targets=targets,
+        masks=masks,
+        channel_inds=channel_inds,
+        channel_names=channel_names_list
+    ))
 
     return metrics
