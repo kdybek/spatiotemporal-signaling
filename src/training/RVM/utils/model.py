@@ -590,7 +590,7 @@ class VideoSiamMAE(nn.Module):
             nn.initializers.normal(stddev=0.02),
             (self.num_channels, self.latent_emb_dim),
         )   
-        self.channel_mask_tokens = self.param('mask_token', nn.initializers.normal(
+        self.channel_mask_tokens = self.param('channel_mask_tokens', nn.initializers.normal(
             stddev=0.02), (self.num_channels, self.decoder_emb_dim))
 
     def encode(self, source_frames, channel_inds):
@@ -745,7 +745,7 @@ class VideoSiamMAE(nn.Module):
                 num_target_frames,
                 self.num_channels,
                 inds_restore.shape[-2] - unmasked_tokens.shape[-2],
-                self.mask_token.shape[-1],
+                self.channel_mask_tokens.shape[-1],
             ],
         )
         mask_tokens = jnp.take_along_axis(mask_tokens, channel_inds[:, None, :, None, None], axis=2)
