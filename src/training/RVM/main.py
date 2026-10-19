@@ -252,7 +252,7 @@ def main(_):
     if FLAGS.checkpoint_path is not None:
         params, opt_state, step = load_checkpoint(checkpointer, FLAGS.checkpoint_path)
 
-    while step < FLAGS.steps + 1:
+    while step <= FLAGS.steps:
         loader = batch_iterator(train_dataset, batch_size=FLAGS.batch_size)
         for clips, channel_inds, _ in tqdm(loader, desc="Training epoch"):
             metrics = {}

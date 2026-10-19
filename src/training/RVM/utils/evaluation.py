@@ -383,7 +383,8 @@ def downstream_evaluation_(
 
     wandb.define_metric(f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_train_loss", step_metric=f"tgt_{target}_fd_step_{main_training_step}_step")
 
-    for step in range(num_steps):
+    step = 1
+    while step <= num_steps:
         loader = batch_iterator(downstream_train_dataset, batch_size=batch_size)
         for clips, channel_inds, metadata in tqdm(loader, desc=f"Downstream training"):
 
@@ -419,6 +420,10 @@ def downstream_evaluation_(
                 f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_train_loss": loss,
                 f"tgt_{target}_fd_step_{main_training_step}_step": step
             })
+
+            step += 1
+            if step > num_steps:
+                break
 
     loader = batch_iterator(downstream_test_dataset, batch_size=batch_size)
     all_predictions = []
