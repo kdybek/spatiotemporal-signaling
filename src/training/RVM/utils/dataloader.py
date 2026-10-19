@@ -252,12 +252,14 @@ def create_train_val_datasets(
     random_crop_train=True,
     random_crop_val=False,
 ):
+    '''
     return (
         DummyDataset(clip_frames, clip_size, acq_freq, channel_names_list), 
         DummyDataset(clip_frames, clip_size, acq_freq, channel_names_list),
         DummyDataset(DOWNSTREAM_EVAL_FRAMES, clip_size, acq_freq, channel_names_list),
         DummyDataset(DOWNSTREAM_EVAL_FRAMES, clip_size, acq_freq, channel_names_list)
     )
+    '''
     
     root = zarr.open(zarr_path, mode="r")
     train_root = root["train"]
