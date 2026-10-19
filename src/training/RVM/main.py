@@ -211,19 +211,6 @@ def main(_):
         eval_metrics.update({"fd_step": 0})
         wandb.log(eval_metrics)
 
-        downstream_eval_key, rng_key = jax.random.split(rng_key)
-        downstream_evaluation(
-            foundation_model=model,
-            foundation_model_params=params,
-            downstream_train_dataset=downstream_train_dataset,
-            downstream_test_dataset=downstream_test_dataset,
-            num_steps=FLAGS.steps // 10,
-            batch_size=FLAGS.batch_size,
-            grad_accumulation_steps=FLAGS.grad_accumulation_steps,
-            main_training_step=0,
-            rng_key=downstream_eval_key,
-        )
-
     checkpointer = ocp.Checkpointer(ocp.PyTreeCheckpointHandler())
 
     @jax.jit
