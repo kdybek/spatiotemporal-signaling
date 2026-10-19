@@ -552,7 +552,7 @@ class AttentionPoolingClassifier(nn.Module):
         }
 
 
-def random_masking_with_shared_dim(rng_key, tokens, mask_ratio):
+def random_masking_with_shared_dim(rng_key, tokens, mask_ratio, share_S):
     """Random masking: shuffle tokens and return visible/masked split info.
 
     Args:
@@ -568,17 +568,24 @@ def random_masking_with_shared_dim(rng_key, tokens, mask_ratio):
     n_tokens = tokens.shape[-2]
     n_keep = int(n_tokens * (1.0 - mask_ratio))
 
-    batch_shape = tokens.shape[:-3]
-    shared_dim = tokens.shape[-3]
+    if share_S:
+        batch_shape = tokens.shape[:-3]
+        shared_dim = tokens.shape[-3]
 
-    # One permutation per batch element (shared across the S dimension)
-    inds = jnp.broadcast_to(jnp.arange(n_tokens), batch_shape + (n_tokens,))[
-        ..., None, :, None
-    ]
+        # One permutation per batch element (shared across the S dimension)
+        inds = jnp.broadcast_to(jnp.arange(n_tokens), batch_shape + (n_tokens,))[
+            ..., None, :, None
+        ]
 
-    inds = jax.random.permutation(rng_key, inds, axis=-2, independent=True)
+        inds = jax.random.permutation(rng_key, inds, axis=-2, independent=True)
 
-    inds = jnp.broadcast_to(inds, batch_shape + (shared_dim, n_tokens, 1))
+        inds = jnp.broadcast_to(inds, batch_shape + (shared_dim, n_tokens, 1))
+    else:
+        # One permutation per batch element and S dimension
+        inds = jnp.broadcast_to(jnp.arange(n_tokens), tokens.shape[:-1])[
+            ..., None
+        ]
+        inds = jax.random.permutation(rng_key, inds, axis=-2, independent=True)
 
     inds_restore = jnp.argsort(inds, axis=-2)
 
@@ -733,14 +740,14 @@ class VideoSiamMAE(nn.Module):
             # Mask source tokens (masks are shared across the time dimension)
             rng_key, src_mask_key = jax.random.split(rng_key)
             source_tokens, _, _ = random_masking_with_shared_dim(
-                src_mask_key, source_tokens, self.src_masking_ratio
+                src_mask_key, source_tokens, self.src_masking_ratio, share_S=True
             )
 
         # Mask target tokens (masks are shared across the channel dimension)
         target_tokens_flat = einops.rearrange(target_tokens, "... h w D -> ... (h w) D")
         rng_key, tgt_mask_key = jax.random.split(rng_key)
         visible_target, inds_restore, mask = random_masking_with_shared_dim(
-            tgt_mask_key, target_tokens_flat, self.tgt_masking_ratio
+            tgt_mask_key, target_tokens_flat, self.tgt_masking_ratio, share_S=False
         )
         *_, visible_target_c, visible_target_hw, _ = visible_target.shape
         visible_target = einops.rearrange(visible_target, "... c hw D -> ... (c hw) D")
