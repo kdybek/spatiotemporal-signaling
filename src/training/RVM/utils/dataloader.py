@@ -8,11 +8,6 @@ from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
 
 
-DATASET_T_CHUNK = 64
-DATASET_H_CHUNK = 256
-DATASET_W_CHUNK = 256
-
-
 def percentile_norm(video):
     for c in range(video.shape[1]):  # per channel
         p1, p99 = np.percentile(video[:, c], (1, 99))
@@ -61,6 +56,14 @@ def snap_to_chunk_size(value, chunk_size):
     return (value // chunk_size) * chunk_size
 
 
+def find_chunk_size(zarr_chunk, frames):
+    for d in range(frames, zarr_chunk + 1):
+        if zarr_chunk % d == 0:
+            return d
+
+    return zarr_chunk
+
+
 def get_clip(root, video_name, clip_frames, clip_size, acq_freq, channel_names_list, random_crop, num_available_channels=3, validation=False):
     video_shape = root[video_name].shape
     video_metadata = root[video_name].attrs["Metadata"]
@@ -105,9 +108,11 @@ def get_clip(root, video_name, clip_frames, clip_size, acq_freq, channel_names_l
         start_h = (H - clip_size) // 2
         start_w = (W - clip_size) // 2
 
-    start_t = snap_to_chunk_size(start_t, DATASET_T_CHUNK)
-    start_h = snap_to_chunk_size(start_h, DATASET_H_CHUNK)
-    start_w = snap_to_chunk_size(start_w, DATASET_W_CHUNK)
+    optimal_chunk_size_t = find_chunk_size(root[video_name].chunks[0], min_frames_needed)
+
+    start_t = snap_to_chunk_size(start_t, optimal_chunk_size_t)
+    start_h = snap_to_chunk_size(start_h, root[video_name].chunks[2])
+    start_w = snap_to_chunk_size(start_w, root[video_name].chunks[3])
 
     clip = root[video_name][start_t:start_t + min_frames_needed:step, channel_indices,
                             start_h:start_h + clip_size, start_w:start_w + clip_size]
@@ -197,6 +202,13 @@ class ZarrVideoDataset():
 
         return video, channel_inds, metadata
 
+    def get_all_metadata(self):
+        all_metadata = []
+        for video_name in self.video_names:
+            metadata = self.root[video_name].attrs["Metadata"]
+            all_metadata.append(metadata)
+        return all_metadata
+
 
 # Usefull for debugging
 class DummyDataset():
@@ -226,10 +238,11 @@ def create_train_val_datasets(
     acq_freq,
     channel_names_list,
     transform_pipeline,
+    downstream_split_config,
     augment_train=True,
     augment_val=False,
     random_crop_train=True,
-    random_crop_val=False
+    random_crop_val=False,
 ):
     # return DummyDataset(clip_frames, clip_size, acq_freq, channel_names_list), DummyDataset(clip_frames, clip_size, acq_freq, channel_names_list)
     
@@ -237,17 +250,23 @@ def create_train_val_datasets(
     train_root = root["train"]
     val_root = root["val"]
 
-    def get_valid_video_names(zarr_group):
+    def get_valid_video_names(zarr_group, experiments_list=None):
         valid_video_names = []
         for video_name in zarr_group:
+            if experiments_list is not None:
+                metadata = zarr_group[video_name].attrs["Metadata"]
+                experiment_name = metadata["Path"]
+                if experiment_name not in experiments_list:
+                    continue
+
             try:
                 get_clip(
-                    zarr_group,
-                    video_name,
-                    clip_frames,
-                    clip_size,
-                    acq_freq,
-                    channel_names_list,
+                    root=zarr_group,
+                    video_name=video_name,
+                    clip_frames=clip_frames,
+                    clip_size=clip_size,
+                    acq_freq=acq_freq,
+                    channel_names_list=channel_names_list,
                     random_crop=False,
                     validation=True,
                 )
@@ -260,42 +279,70 @@ def create_train_val_datasets(
 
     train_video_names = get_valid_video_names(train_root)
     val_video_names = get_valid_video_names(val_root)
+    downstream_train_video_names = get_valid_video_names(val_root, downstream_split_config["train"])
+    downstream_test_video_names = get_valid_video_names(val_root, downstream_split_config["test"])
 
     print(f"Using {len(train_video_names)} videos for training and {
           len(val_video_names)} videos for testing.")
+    print(f"Using {len(downstream_train_video_names)} videos for downstream training and {
+          len(downstream_test_video_names)} videos for downstream testing.")
 
     train_dataset = ZarrVideoDataset(
-        train_root,
-        train_video_names,
-        clip_frames,
-        clip_size,
-        acq_freq,
-        channel_names_list,
-        transform_pipeline,
+        root=train_root,
+        video_names=train_video_names,
+        clip_frames=clip_frames,
+        clip_size=clip_size,
+        acq_freq=acq_freq,
+        channel_names_list=channel_names_list,
+        transform_pipeline=transform_pipeline,
         augment=augment_train,
         random_crop=random_crop_train,
     )
 
     val_dataset = ZarrVideoDataset(
-        val_root,
-        val_video_names,
-        clip_frames,
-        clip_size,
-        acq_freq,
-        channel_names_list,
-        transform_pipeline,
+        root=val_root,
+        video_names=val_video_names,
+        clip_frames=clip_frames,
+        clip_size=clip_size,
+        acq_freq=acq_freq,
+        channel_names_list=channel_names_list,
+        transform_pipeline=transform_pipeline,
         augment=augment_val,
         random_crop=random_crop_val,
     )
 
-    return train_dataset, val_dataset
+    downstream_train_dataset = ZarrVideoDataset(
+        root=val_root,
+        video_names=downstream_train_video_names,
+        clip_frames=clip_frames,
+        clip_size=clip_size,
+        acq_freq=acq_freq,
+        channel_names_list=channel_names_list,
+        transform_pipeline=transform_pipeline,
+        augment=augment_train,
+        random_crop=random_crop_train,
+    )
+
+    downstream_test_dataset = ZarrVideoDataset(
+        root=val_root,
+        video_names=downstream_test_video_names,
+        clip_frames=clip_frames,
+        clip_size=clip_size,
+        acq_freq=acq_freq,
+        channel_names_list=channel_names_list,
+        transform_pipeline=transform_pipeline,
+        augment=augment_val,
+        random_crop=random_crop_val,
+    )
+
+    return train_dataset, val_dataset, downstream_train_dataset, downstream_test_dataset
 
 
 def batch_iterator(
     dataset,
     batch_size,
     shuffle=True,
-    max_workers=32,
+    max_workers=8,
     prefetch_buffer_size=128,
 ):
     indices = np.arange(len(dataset))

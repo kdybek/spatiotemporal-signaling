@@ -1,5 +1,6 @@
 from tqdm import tqdm
 import jax
+import optax
 import jax.numpy as jnp
 import numpy as np
 import wandb
@@ -10,11 +11,13 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import StratifiedKFold, cross_val_score
 import matplotlib.pyplot as plt
+import re
 
 from utils.dataloader import batch_iterator, prepare_rvm_src_tgt_pairs
-
+from utils.model import get_optimizer, AttentionPoolingClassifier
 
 EVAL_SUBFOLDER = "evaluation"
+DOWNSTREAM_SUBFOLDER = "downstream"
 RECONSTRUCTION_SUBFOLDER = "reconstruction"
 DIM_RED_SUBFOLDER = "dimensionality_reduction"
 
@@ -29,7 +32,7 @@ def compute_outputs(
     min_offset,
     max_offset,
     batch_size,
-    rng_key
+    rng_key,
 ):
     @jax.jit
     def forward(sources, targets, channel_inds, target_deltas, rng):
@@ -51,11 +54,19 @@ def compute_outputs(
             targets, channel_inds[:, None, None, None, :], axis=-1
         )
 
-        assert output["reconstructed"].shape[-3] % output["mask"].shape[-3] == 0, "Target height must be divisible by mask height"
-        assert output["reconstructed"].shape[-2] % output["mask"].shape[-2] == 0, "Target width must be divisible by mask width"
+        assert (
+            output["reconstructed"].shape[-3] % output["mask"].shape[-3] == 0
+        ), "Target height must be divisible by mask height"
+        assert (
+            output["reconstructed"].shape[-2] % output["mask"].shape[-2] == 0
+        ), "Target width must be divisible by mask width"
 
-        patch_scaling_factor_h = output["reconstructed"].shape[-3] // output["mask"].shape[-3]
-        patch_scaling_factor_w = output["reconstructed"].shape[-2] // output["mask"].shape[-2]
+        patch_scaling_factor_h = (
+            output["reconstructed"].shape[-3] // output["mask"].shape[-3]
+        )
+        patch_scaling_factor_w = (
+            output["reconstructed"].shape[-2] // output["mask"].shape[-2]
+        )
 
         mask = output["mask"].repeat(patch_scaling_factor_h, axis=-3)
         mask = mask.repeat(patch_scaling_factor_w, axis=-2)
@@ -69,7 +80,7 @@ def compute_outputs(
     targets = []
     channel_inds = []
     loader = batch_iterator(test_dataset, batch_size=batch_size)
-    for clips, channel_inds_, _ in tqdm(loader, desc='Evaluation'):
+    for clips, channel_inds_, _ in tqdm(loader, desc="Evaluation"):
         src, tgt, offsets = prepare_rvm_src_tgt_pairs(
             clips, src_frames, tgt_frames, src_sample_prefix, min_offset, max_offset
         )
@@ -95,9 +106,9 @@ def compute_outputs(
     }
 
 
-
-
-def visualize_reconstructions(reconstructed, targets, masks, channel_inds, channel_names, max_samples=8):
+def visualize_reconstructions(
+    reconstructed, targets, masks, channel_inds, channel_names, max_samples=8
+):
     reconstructed = np.clip(reconstructed, 0, 1)
     masked_view = targets * (1 - masks) + 0.5 * masks
     combined = targets * (1 - masks) + reconstructed * masks
@@ -112,7 +123,9 @@ def visualize_reconstructions(reconstructed, targets, masks, channel_inds, chann
     for c in range(C):
         for i in range(min(max_samples, target.shape[0])):
             channel_ind = channel_inds[i, c]
-            metrics[f"{RECONSTRUCTION_SUBFOLDER}/{channel_names[channel_ind]}/image_set_{i}"] = [
+            metrics[
+                f"{RECONSTRUCTION_SUBFOLDER}/{channel_names[channel_ind]}/image_set_{i}"
+            ] = [
                 wandb.Image(target[i, 0, ..., c], caption="Target"),
                 wandb.Image(masked_view[i, 0, ..., c], caption="Masked View"),
                 wandb.Image(combined[i, 0, ..., c], caption="Reconstructed"),
@@ -122,8 +135,9 @@ def visualize_reconstructions(reconstructed, targets, masks, channel_inds, chann
 
 
 def visualize_features(features, labels):
-    assert len(labels) == features.shape[0], \
-        "Number of labels must match the number of feature vectors."
+    assert (
+        len(labels) == features.shape[0]
+    ), "Number of labels must match the number of feature vectors."
 
     encoder = LabelEncoder()
     y = encoder.fit_transform(labels)
@@ -152,29 +166,23 @@ def visualize_features(features, labels):
 
 
 def evaluate_probing(features, labels, cv=5):
-    assert len(labels) == features.shape[0], \
-        "Number of labels must match the number of feature vectors."
+    assert (
+        len(labels) == features.shape[0]
+    ), "Number of labels must match the number of feature vectors."
 
     if len(features) < cv:
         return {}
 
-    clf = Pipeline([
-        ("scaler", StandardScaler()),
-        ("logreg", LogisticRegression(max_iter=1000))
-    ])
+    clf = Pipeline(
+        [("scaler", StandardScaler()), ("logreg", LogisticRegression(max_iter=1000))]
+    )
 
     cv_split = StratifiedKFold(
         n_splits=cv,
         shuffle=True,
     )
 
-    scores = cross_val_score(
-        clf,
-        features,
-        labels,
-        cv=cv_split,
-        scoring="accuracy"
-    )
+    scores = cross_val_score(clf, features, labels, cv=cv_split, scoring="accuracy")
 
     return {
         f"{EVAL_SUBFOLDER}/probing_mean_acc": np.mean(scores),
@@ -191,18 +199,18 @@ def evaluate_loss(reconstructed, targets, masks):
     }
 
 
-def full_evaluation(
-        model,
-        test_dataset,
-        params,
-        src_frames,
-        tgt_frames,
-        channel_names_list,
-        src_sample_prefix,
-        min_offset,
-        max_offset,
-        batch_size,
-        rng_key
+def partial_evaluation(
+    model,
+    test_dataset,
+    params,
+    src_frames,
+    tgt_frames,
+    channel_names_list,
+    src_sample_prefix,
+    min_offset,
+    max_offset,
+    batch_size,
+    rng_key,
 ):
     outputs = compute_outputs(
         model,
@@ -214,7 +222,7 @@ def full_evaluation(
         min_offset,
         max_offset,
         batch_size,
-        rng_key
+        rng_key,
     )
 
     reconstructed = outputs["reconstructed"]
@@ -223,17 +231,221 @@ def full_evaluation(
     channel_inds = outputs["channel_inds"]
 
     metrics = {}
-    metrics.update(evaluate_loss(
-        reconstructed=reconstructed,
-        targets=targets,
-        masks=masks
-    ))
-    metrics.update(visualize_reconstructions(
-        reconstructed=reconstructed,
-        targets=targets,
-        masks=masks,
-        channel_inds=channel_inds,
-        channel_names=channel_names_list
-    ))
+    metrics.update(
+        evaluate_loss(reconstructed=reconstructed, targets=targets, masks=masks)
+    )
+    metrics.update(
+        visualize_reconstructions(
+            reconstructed=reconstructed,
+            targets=targets,
+            masks=masks,
+            channel_inds=channel_inds,
+            channel_names=channel_names_list,
+        )
+    )
 
     return metrics
+
+
+def sanitize_cell_type(cell_type):
+    s = re.sub(r"^MCF10A_", "", cell_type)
+    s = re.sub(r"_Clone.*$", "", s)
+
+    return s
+
+
+def find_classes(dataset, target):
+    classes = set()
+    all_metadata = dataset.get_all_metadata()
+
+    for metadata in all_metadata:
+        if target == "cell_type":
+            cell_type = metadata["Cell_type"]
+            cell_type = sanitize_cell_type(cell_type)
+            classes.add(cell_type)
+        elif target == "treatment":
+            treatment = metadata["Inhibitor"]
+            classes.add(treatment)
+        else:
+            raise ValueError(f"Unknown target: {target}")
+
+    return sorted(list(classes))
+
+
+def downstream_evaluation(
+    foundation_model,
+    foundation_model_params,
+    downstream_train_dataset,
+    downstream_test_dataset,
+    num_frames,
+    num_steps,
+    batch_size,
+    main_training_step,
+    rng_key,
+):
+    for target in ["cell_type", "treatment"]:
+        downstream_evaluation_(
+            foundation_model,
+            foundation_model_params,
+            downstream_train_dataset,
+            downstream_test_dataset,
+            target,
+            num_frames,
+            num_steps,
+            batch_size,
+            main_training_step,
+            rng_key,
+        )
+        
+
+def downstream_evaluation_(
+    foundation_model,
+    foundation_model_params,
+    downstream_train_dataset,
+    downstream_test_dataset,
+    target,
+    num_frames,
+    num_steps,
+    batch_size,
+    main_training_step,
+    rng_key,
+):
+    classes_train = find_classes(downstream_train_dataset, target)
+    classes_test = find_classes(downstream_test_dataset, target)
+
+    assert set(classes_train) == set(classes_test), "Train and test classes must match."
+
+    class_to_index = {cls: idx for idx, cls in enumerate(classes_train)}
+    num_classes = len(classes_train)
+
+    downstream_model = AttentionPoolingClassifier(num_classes)
+
+    latent_emb_dim = foundation_model.latent_emb_dim
+    dummy_input = jnp.ones((1, 1, latent_emb_dim))
+    init_key, rng_key = jax.random.split(rng_key)
+    downstream_params = downstream_model.init(init_key, dummy_input)["params"]
+
+    optimizer = get_optimizer(
+        base_lr=1e-4, 
+        warmup_steps=int(0.05 * num_steps), 
+        total_steps=num_steps, 
+        grad_accumulation_steps=1
+    )
+    opt_state = optimizer.init(downstream_params)
+
+    @jax.jit
+    def training_step(
+        params,
+        opt_state,
+        src_frames,
+        channel_inds,
+        labels,
+    ):
+        features = foundation_model.apply(
+            {"params": foundation_model_params}, 
+            src_frames, 
+            channel_inds, 
+            method=foundation_model.encode
+        )
+        
+        def loss_fn(params, features, labels):
+            output = downstream_model.apply({"params": params}, features)
+            logits = output["logits"]
+            one_hot_labels = jax.nn.one_hot(labels, num_classes)
+            loss = jnp.mean(
+                jnp.sum(-one_hot_labels * jax.nn.log_softmax(logits), axis=-1)
+            )
+            return loss
+
+        grad_fn = jax.value_and_grad(loss_fn)
+        loss, grads = grad_fn(params, features, labels)
+
+        updates, new_opt_state = optimizer.update(grads, opt_state, params)
+        new_params = optax.apply_updates(params, updates)
+
+        return new_params, new_opt_state, loss
+
+    @jax.jit
+    def predict(params, src_frames, channel_inds):
+        features = foundation_model.apply(
+            {"params": foundation_model_params}, 
+            src_frames, 
+            channel_inds, 
+            method=foundation_model.encode
+        )
+        output = downstream_model.apply({"params": params}, features)
+        logits = output["logits"]
+        predictions = jnp.argmax(logits, axis=-1)
+        return predictions
+
+    for step in range(num_steps):
+        loader = batch_iterator(downstream_train_dataset, batch_size=batch_size)
+        for batch in loader:
+            clips = batch["clips"]
+            channel_inds = batch["channel_inds"]
+            metadata = batch["metadata"]
+
+            clips = np.transpose(clips, (0, 1, 3, 4, 2))
+
+            labels = []
+            for meta in metadata:
+                if target == "cell_type":
+                    cell_type = meta["Cell_type"]
+                    cell_type = sanitize_cell_type(cell_type)
+                    label_idx = class_to_index[cell_type]
+                elif target == "treatment":
+                    treatment = meta["Inhibitor"]
+                    label_idx = class_to_index[treatment]
+                else:
+                    raise ValueError(f"Unknown target: {target}")
+                
+                labels.append(label_idx)
+
+            labels = np.array(labels)
+
+            downstream_params, opt_state, loss = training_step(
+                downstream_params,
+                opt_state,
+                clips,
+                channel_inds,
+                labels,
+            )
+
+            wandb.log({f"{DOWNSTREAM_SUBFOLDER}/downstream_train_loss_{main_training_step}": loss}, step=step)
+
+    loader = batch_iterator(downstream_test_dataset, batch_size=batch_size)
+    all_predictions = []
+    all_labels = []
+    for batch in loader:
+        clips = batch["clips"]
+        channel_inds = batch["channel_inds"]
+        metadata = batch["metadata"]
+
+        clips = np.transpose(clips, (0, 1, 3, 4, 2))
+
+        labels = []
+        for meta in metadata:
+            if target == "cell_type":
+                cell_type = meta["Cell_type"]
+                cell_type = sanitize_cell_type(cell_type)
+                label_idx = class_to_index[cell_type]
+            elif target == "treatment":
+                treatment = meta["Inhibitor"]
+                label_idx = class_to_index[treatment]
+            else:
+                raise ValueError(f"Unknown target: {target}")
+            
+            labels.append(label_idx)
+
+        labels = np.array(labels)
+
+        predictions = predict(downstream_params, clips, channel_inds)
+        all_predictions.extend(np.array(predictions))
+        all_labels.extend(labels)
+
+    all_predictions = np.array(all_predictions)
+    all_labels = np.array(all_labels)
+
+    accuracy = np.mean(all_predictions == all_labels)
+
+    wandb.log({f"{DOWNSTREAM_SUBFOLDER}/downstream_test_accuracy": accuracy}, step=main_training_step)

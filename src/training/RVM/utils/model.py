@@ -1,6 +1,7 @@
 import einops
 import numpy as np
 import jax
+import optax
 
 import dataclasses
 import re
@@ -11,21 +12,32 @@ from flax import linen as nn
 
 class PatchEmbedding(nn.Module):
     """Extracts patches with a single learned linear projection."""
+
     patch_size: list[int]
     num_features: int
 
     @nn.compact
     def __call__(self, images):
-        return nn.Conv(features=self.num_features, kernel_size=self.patch_size, strides=self.patch_size, padding='VALID')(images)
+        return nn.Conv(
+            features=self.num_features,
+            kernel_size=self.patch_size,
+            strides=self.patch_size,
+            padding="VALID",
+        )(images)
 
 
 def get_mae_sinusoid_encoding_table(n_position, d_hid, dtype=jnp.float32):
     """Sinusoid positional encoding table for MAE."""
-    def get_position_angle_vec(position):
-        return [position / np.power(10000, 2 * (hid_j // 2) / d_hid) for hid_j in range(d_hid)]
 
-    sinusoid_table = np.array([get_position_angle_vec(pos_i)
-                              for pos_i in range(n_position)])
+    def get_position_angle_vec(position):
+        return [
+            position / np.power(10000, 2 * (hid_j // 2) / d_hid)
+            for hid_j in range(d_hid)
+        ]
+
+    sinusoid_table = np.array(
+        [get_position_angle_vec(pos_i) for pos_i in range(n_position)]
+    )
     sinusoid_table[:, 0::2] = np.sin(sinusoid_table[:, 0::2])  # dim 2i
     sinusoid_table[:, 1::2] = np.cos(sinusoid_table[:, 1::2])  # dim 2i+1
 
@@ -34,6 +46,7 @@ def get_mae_sinusoid_encoding_table(n_position, d_hid, dtype=jnp.float32):
 
 class SincosPosEmb(nn.Module):
     """Returns sinusoidal positional embedding given the shape of the tokens."""
+
     base_token_shape: list[int] | None = None
 
     @nn.compact
@@ -45,19 +58,21 @@ class SincosPosEmb(nn.Module):
             h, w = tokens_shape[-3], tokens_shape[-2]
 
         posenc = get_mae_sinusoid_encoding_table(np.prod((h, w)), d)
-        posenc = einops.rearrange(posenc, '... (h w) d -> ... h w d', h=h, w=w)
+        posenc = einops.rearrange(posenc, "... (h w) d -> ... h w d", h=h, w=w)
         *b, tokens_h, tokens_w, _ = tokens_shape
-        for _ in range(len(b)-1):
+        for _ in range(len(b) - 1):
             posenc = jnp.expand_dims(posenc, axis=0)
         if tokens_h != h or tokens_w != w:
             posenc = jax.image.resize(
-                posenc, (*b, tokens_h, tokens_w, d), method='bicubic')
+                posenc, (*b, tokens_h, tokens_w, d), method="bicubic"
+            )
 
         return posenc
 
 
 class Tokenizer(nn.Module):
     """Simple tokenizer."""
+
     patch_embedding: nn.Module
     posenc: nn.Module
 
@@ -89,12 +104,12 @@ class MultiChannelTokenizer(nn.Module):
         """
         channels = []
         for i in range(videos.shape[-1]):
-            image = videos[..., i:i+1]
+            image = videos[..., i : i + 1]
 
             patch_embedder = PatchEmbedding(
-                patch_size=self.patch_size, 
-                num_features=self.num_features, 
-                name=f'patch_embedder_{i}'
+                patch_size=self.patch_size,
+                num_features=self.num_features,
+                name=f"patch_embedder_{i}",
             )
             channel_tokens = patch_embedder(image)
             channel_tokens += self.posenc(channel_tokens.shape)
@@ -102,11 +117,14 @@ class MultiChannelTokenizer(nn.Module):
 
         tokens = jnp.stack(channels, axis=2)
 
-        return jnp.take_along_axis(tokens, channel_inds[:, None, :, None, None, None], axis=2)
+        return jnp.take_along_axis(
+            tokens, channel_inds[:, None, :, None, None, None], axis=2
+        )
 
 
 class TransformerMLP(nn.Module):
     """Simple MLP with a single hidden layer for use in Transformer blocks."""
+
     hidden_size: int = None  # Defaults to 4 times input dims.
 
     @nn.compact
@@ -115,7 +133,7 @@ class TransformerMLP(nn.Module):
         hidden_size = 4 * d if self.hidden_size is None else self.hidden_size
         h = nn.Dense(
             features=hidden_size,
-            name='dense_in',
+            name="dense_in",
             kernel_init=nn.initializers.xavier_uniform(),
             bias_init=nn.initializers.zeros,
             dtype=inputs.dtype,
@@ -123,7 +141,7 @@ class TransformerMLP(nn.Module):
         h = nn.gelu(h)
         return nn.Dense(
             features=inputs.shape[-1],
-            name='dense_out',
+            name="dense_out",
             kernel_init=nn.initializers.xavier_uniform(),
             bias_init=nn.initializers.zeros,
             dtype=h.dtype,
@@ -151,16 +169,16 @@ class PreNormBlock(nn.Module):
 
 
 VIT_SIZES = {
-    'mu': (32, 1, 128, 2),
-    'Ti': (192, 12, 768, 3),
-    'S': (384, 12, 1536, 6),
-    'M': (512, 12, 2048, 8),
-    'B': (768, 12, 3072, 12),
-    'L': (1024, 24, 4096, 16),
-    'H': (1280, 32, 5120, 16),
-    'g': (1408, 40, 6144, 16),
-    'G': (1664, 48, 8192, 16),
-    'e': (1792, 56, 15360, 16),
+    "mu": (32, 1, 128, 2),
+    "Ti": (192, 12, 768, 3),
+    "S": (384, 12, 1536, 6),
+    "M": (512, 12, 2048, 8),
+    "B": (768, 12, 3072, 12),
+    "L": (1024, 24, 4096, 16),
+    "H": (1280, 32, 5120, 16),
+    "g": (1408, 40, 6144, 16),
+    "G": (1664, 48, 8192, 16),
+    "e": (1792, 56, 15360, 16),
 }
 
 
@@ -178,15 +196,15 @@ class ViTSpec:
     def from_variant_string(cls, variant_str: str):
         """Parse variant strings like "ViT-L", "B", or "Ti/16"."""
         r = re.match(
-            r'^([Vv][Ii][Tt][-_])?(?P<name>[a-zA-Z]{1,2})(/(?P<patch>\d+))?$',
+            r"^([Vv][Ii][Tt][-_])?(?P<name>[a-zA-Z]{1,2})(/(?P<patch>\d+))?$",
             variant_str,
         )
         if r is None:
-            raise ValueError(f'Invalid variant string: {variant_str!r}.')
-        name = r.groupdict()['name']
+            raise ValueError(f"Invalid variant string: {variant_str!r}.")
+        name = r.groupdict()["name"]
         spec = cls(*VIT_SIZES[name])
 
-        patch_size = r.groupdict()['patch']
+        patch_size = r.groupdict()["patch"]
         if patch_size is not None:
             spec = dataclasses.replace(spec, patch_size=int(patch_size))
         return spec
@@ -201,12 +219,13 @@ class ViTSpec:
             patch_size=self.patch_size,
         )
         if self.patch_size is None:
-            del kwargs['patch_size']
+            del kwargs["patch_size"]
         return kwargs
 
 
 class Transformer(nn.Module):
     """Simple transformer model."""
+
     layers: tuple[Any]
 
     @nn.compact
@@ -220,8 +239,8 @@ class Transformer(nn.Module):
     def from_variant_str(cls, variant_str: str, **kwargs):
         vit_spec = ViTSpec.from_variant_string(variant_str)
         all_kwargs = vit_spec.kwargs | kwargs
-        all_kwargs.pop('patch_size', None)
-        all_kwargs.pop('hidden_size', None)
+        all_kwargs.pop("patch_size", None)
+        all_kwargs.pop("hidden_size", None)
         return cls.from_spec(**all_kwargs)
 
     @classmethod
@@ -267,11 +286,13 @@ class GatedTransformerCore(nn.Module):
 
     def __call__(self, inputs, state):
         update_gate = jax.nn.sigmoid(
-            self.input_update(inputs) + self.state_update(state))
+            self.input_update(inputs) + self.state_update(state)
+        )
         reset_gate = jax.nn.sigmoid(self.input_reset(inputs) + self.state_reset(state))
-        h = self.transformer(inputs, inputs_kv=reset_gate *
-                             self.state_layer_norm(state))
-        output = (1-update_gate)*state + update_gate * h
+        h = self.transformer(
+            inputs, inputs_kv=reset_gate * self.state_layer_norm(state)
+        )
+        output = (1 - update_gate) * state + update_gate * h
         state = output
         return output, state
 
@@ -282,7 +303,7 @@ def softmax(x):
 
 def dot_product_attention_weights(query, key):
     query = query / jnp.sqrt(query.shape[-1])
-    attn_weights = jnp.einsum('...qhd,...khd->...hqk', query, key)
+    attn_weights = jnp.einsum("...qhd,...khd->...hqk", query, key)
     return softmax(attn_weights)
 
 
@@ -322,15 +343,15 @@ class ImprovedMultiHeadDotProductAttention(nn.Module):
                 name=name,
             )(x)
 
-        query = dense('query', inputs_q, qk_features)
-        key = dense('key', inputs_k, qk_features)
-        value = dense('value', inputs_v, v_features)
+        query = dense("query", inputs_q, qk_features)
+        key = dense("key", inputs_k, qk_features)
+        value = dense("value", inputs_v, v_features)
 
         # Compute attention weights.
         attn_weights = dot_product_attention_weights(query=query, key=key)
 
         # Return weighted sum over values for each query position.
-        x = jnp.einsum('...hqk,...khd->...qhd', attn_weights, value)
+        x = jnp.einsum("...hqk,...khd->...qhd", attn_weights, value)
 
         # Back to the original input dimensions.
         return nn.DenseGeneral(
@@ -340,12 +361,13 @@ class ImprovedMultiHeadDotProductAttention(nn.Module):
             bias_init=nn.initializers.zeros_init(),
             use_bias=True,
             dtype=x.dtype,
-            name='out',
+            name="out",
         )(x)
 
 
 class CrossAttentionTransformer(nn.Module):
     """Cross attention transformer."""
+
     num_heads: int
     num_layers: int
     num_feats: int
@@ -353,10 +375,15 @@ class CrossAttentionTransformer(nn.Module):
     dtype: Any
 
     def setup(self):
-        self.xa_blocks = [CrossAttentionBlock(
-            num_heads=self.num_heads, num_feats=self.num_feats,
-            mlp_dim=self.mlp_dim, dtype=self.dtype,
-        ) for _ in range(self.num_layers)]
+        self.xa_blocks = [
+            CrossAttentionBlock(
+                num_heads=self.num_heads,
+                num_feats=self.num_feats,
+                mlp_dim=self.mlp_dim,
+                dtype=self.dtype,
+            )
+            for _ in range(self.num_layers)
+        ]
         self.output_norm = nn.LayerNorm(dtype=self.dtype)
 
     def __call__(self, inputs, inputs_kv):
@@ -391,8 +418,9 @@ class CrossAttentionBlock(nn.Module):
 
     def __call__(self, inputs, inputs_kv):
         x = inputs
-        x = x + self.ca_attention(inputs_q=self.ca_attention_norm(x),
-                                  inputs_k=inputs_kv, inputs_v=inputs_kv)
+        x = x + self.ca_attention(
+            inputs_q=self.ca_attention_norm(x), inputs_k=inputs_kv, inputs_v=inputs_kv
+        )
         x = x + self.mlp(self.mlp_norm(x))
         x = x + self.attention(self.attention_norm(x))
         return x
@@ -404,13 +432,15 @@ class RandomStateInit(nn.Module):
     @nn.compact
     def __call__(self, inputs, batch_shape):
         shape = inputs.shape[-2:]
-        state = 0 * jax.random.normal(key=self.make_rng("default"),
-                                      shape=batch_shape + shape)
+        state = 0 * jax.random.normal(
+            key=self.make_rng("default"), shape=batch_shape + shape
+        )
         return state
 
 
 class Detokenizer(nn.Module):
     """Detokenize tokens to pixel-space patches via a learned linear projection."""
+
     patch_size: tuple[int, int]
     num_features: int = 3
 
@@ -421,7 +451,7 @@ class Detokenizer(nn.Module):
         # Rearrange from (... H W (h w C)) to (... H*h W*w C)
         x = einops.rearrange(
             x,
-            '... H W (h w C) -> ... (H h) (W w) C',
+            "... H W (h w C) -> ... (H h) (W w) C",
             h=self.patch_size[0],
             w=self.patch_size[1],
             C=self.num_features,
@@ -431,6 +461,7 @@ class Detokenizer(nn.Module):
 
 class MultiChannelDetokenizer(nn.Module):
     """Detokenize tokens to pixel-space patches via a learned linear projection."""
+
     patch_size: tuple[int, int]
     num_channels: int
 
@@ -444,21 +475,18 @@ class MultiChannelDetokenizer(nn.Module):
 
         batch = jnp.arange(B)[:, None, None]
         time = jnp.arange(T)[None, :, None]
-        channel = channel_inds[:, None, :]   # (B, 1, c)
+        channel = channel_inds[:, None, :]  # (B, 1, c)
 
-        expanded_x = expanded_x.at[
-            batch,
-            time,
-            channel,
-            :, :, :
-        ].set(x)
+        expanded_x = expanded_x.at[batch, time, channel, :, :, :].set(x)
 
         channels = []
         for i in range(self.num_channels):
-            detokenized = nn.Dense(num_total_features, dtype=x.dtype, name=f'detokenizer_{i}')(expanded_x[..., i, :, :, :])
+            detokenized = nn.Dense(
+                num_total_features, dtype=x.dtype, name=f"detokenizer_{i}"
+            )(expanded_x[..., i, :, :, :])
             detokenized = einops.rearrange(
                 detokenized,
-                '... H W (h w) -> ... (H h) (W w)',
+                "... H W (h w) -> ... (H h) (W w)",
                 h=self.patch_size[0],
                 w=self.patch_size[1],
             )
@@ -517,8 +545,11 @@ class AttentionPoolingClassifier(nn.Module):
             kernel_init=nn.initializers.xavier_uniform(),
             bias_init=nn.initializers.zeros,
         )(pooled)
-        
-        return logits, attention_weights
+
+        return {
+            "logits": logits,
+            "attention_weights": attention_weights,
+        }
 
 
 def random_masking_with_shared_dim(rng_key, tokens, mask_ratio):
@@ -541,10 +572,9 @@ def random_masking_with_shared_dim(rng_key, tokens, mask_ratio):
     shared_dim = tokens.shape[-3]
 
     # One permutation per batch element (shared across the S dimension)
-    inds = jnp.broadcast_to(
-        jnp.arange(n_tokens),
-        batch_shape + (n_tokens,)
-    )[..., None, :, None]
+    inds = jnp.broadcast_to(jnp.arange(n_tokens), batch_shape + (n_tokens,))[
+        ..., None, :, None
+    ]
 
     inds = jax.random.permutation(rng_key, inds, axis=-2, independent=True)
 
@@ -555,10 +585,13 @@ def random_masking_with_shared_dim(rng_key, tokens, mask_ratio):
     shuffled_tokens = jnp.take_along_axis(tokens, inds, axis=-2)
     visible_tokens = shuffled_tokens[..., :n_keep, :]
 
-    mask = jnp.concatenate([
-        jnp.zeros(tokens.shape[:-2] + (n_keep, 1)),
-        jnp.ones(tokens.shape[:-2] + (n_tokens - n_keep, 1)),
-    ], axis=-2)
+    mask = jnp.concatenate(
+        [
+            jnp.zeros(tokens.shape[:-2] + (n_keep, 1)),
+            jnp.ones(tokens.shape[:-2] + (n_tokens - n_keep, 1)),
+        ],
+        axis=-2,
+    )
     mask = jnp.take_along_axis(mask, inds_restore, axis=-2)
 
     return visible_tokens, inds_restore, mask
@@ -586,25 +619,35 @@ class VideoSiamMAE(nn.Module):
 
     def setup(self):
         self.channel_embeddings = self.param(
-            'channel_embeddings',
+            "channel_embeddings",
             nn.initializers.normal(stddev=0.02),
             (self.num_channels, self.latent_emb_dim),
-        )   
-        self.channel_mask_tokens = self.param('channel_mask_tokens', nn.initializers.normal(
-            stddev=0.02), (self.num_channels, self.decoder_emb_dim))
+        )
+        self.channel_mask_tokens = self.param(
+            "channel_mask_tokens",
+            nn.initializers.normal(stddev=0.02),
+            (self.num_channels, self.decoder_emb_dim),
+        )
 
     def encode(self, source_frames, channel_inds):
         """Encode source frames to latent tokens."""
 
         # Tokenize source and target frames
         source_tokens = self.tokenizer(source_frames, channel_inds)
-        *b, num_source_frames, source_tokens_c, source_tokens_h, source_tokens_w, source_tokens_d = source_tokens.shape
+        (
+            *b,
+            num_source_frames,
+            source_tokens_c,
+            source_tokens_h,
+            source_tokens_w,
+            source_tokens_d,
+        ) = source_tokens.shape
 
         channel_embs = self.channel_embeddings[channel_inds]
         source_tokens = source_tokens + channel_embs[:, None, :, None, None, :]
 
         # Flatten source tokens
-        source_tokens = einops.rearrange(source_tokens, '... c h w D -> ... (c h w) D')
+        source_tokens = einops.rearrange(source_tokens, "... c h w D -> ... (c h w) D")
 
         # Encode source frames
         num_source_tokens = source_tokens.shape[-2]
@@ -626,14 +669,21 @@ class VideoSiamMAE(nn.Module):
 
         all_encoded_source_tokens = []
         for t in range(num_source_frames):
-            encoded, state = self.rnn_core(
-                encoded_source_tokens[..., t, :, :], state)
+            encoded, state = self.rnn_core(encoded_source_tokens[..., t, :, :], state)
             all_encoded_source_tokens.append(encoded)
         encoded_source_tokens = jnp.stack(all_encoded_source_tokens, axis=-3)
 
-        features = einops.rearrange(encoded_source_tokens, '... (c h w) D -> ... c h w D', c=source_tokens_c, h=source_tokens_h, w=source_tokens_w)
+        '''
+        features = einops.rearrange(
+            encoded_source_tokens,
+            "... (c h w) D -> ... c h w D",
+            c=source_tokens_c,
+            h=source_tokens_h,
+            w=source_tokens_w,
+        )
+        '''
 
-        return features
+        return encoded_source_tokens
 
     def __call__(
         self,
@@ -656,23 +706,28 @@ class VideoSiamMAE(nn.Module):
         Returns:
           Dictionary with 'reconstructed', 'mask', 'features', 'state'.
         """
-        assert self.decoder is not None, 'Decoder must be provided for reconstruction.'
+        assert self.decoder is not None, "Decoder must be provided for reconstruction."
         rng_key = self.make_rng("default")
 
         # Tokenize source and target frames
         source_tokens = self.tokenizer(source_frames, channel_inds)
         *_, num_source_frames, _, _, _, source_tokens_d = source_tokens.shape
         target_tokens = self.tokenizer(target_frames, channel_inds)
-        *b, num_target_frames, target_tokens_c, target_tokens_h, target_tokens_w, target_tokens_d = (
-            target_tokens.shape
-        )
+        (
+            *b,
+            num_target_frames,
+            target_tokens_c,
+            target_tokens_h,
+            target_tokens_w,
+            target_tokens_d,
+        ) = target_tokens.shape
 
         channel_embs = self.channel_embeddings[channel_inds]
         source_tokens = source_tokens + channel_embs[:, None, :, None, None, :]
         target_tokens = target_tokens + channel_embs[:, None, :, None, None, :]
 
         # Flatten source tokens
-        source_tokens = einops.rearrange(source_tokens, '... c h w D -> ... (c h w) D')
+        source_tokens = einops.rearrange(source_tokens, "... c h w D -> ... (c h w) D")
 
         if self.src_masking_ratio > 0.0:
             # Mask source tokens (masks are shared across the time dimension)
@@ -682,17 +737,13 @@ class VideoSiamMAE(nn.Module):
             )
 
         # Mask target tokens (masks are shared across the channel dimension)
-        target_tokens_flat = einops.rearrange(
-            target_tokens, '... h w D -> ... (h w) D'
-        )
+        target_tokens_flat = einops.rearrange(target_tokens, "... h w D -> ... (h w) D")
         rng_key, tgt_mask_key = jax.random.split(rng_key)
         visible_target, inds_restore, mask = random_masking_with_shared_dim(
             tgt_mask_key, target_tokens_flat, self.tgt_masking_ratio
         )
         *_, visible_target_c, visible_target_hw, _ = visible_target.shape
-        visible_target = einops.rearrange(
-            visible_target, '... c hw D -> ... (c hw) D'
-        )
+        visible_target = einops.rearrange(visible_target, "... c hw D -> ... (c hw) D")
 
         # Encode source frames
         num_source_tokens = source_tokens.shape[-2]
@@ -714,8 +765,7 @@ class VideoSiamMAE(nn.Module):
 
         all_encoded_source_tokens = []
         for t in range(num_source_frames):
-            encoded, state = self.rnn_core(
-                encoded_source_tokens[..., t, :, :], state)
+            encoded, state = self.rnn_core(encoded_source_tokens[..., t, :, :], state)
             all_encoded_source_tokens.append(encoded)
         encoded_source_tokens = jnp.stack(all_encoded_source_tokens, axis=-3)
 
@@ -735,34 +785,39 @@ class VideoSiamMAE(nn.Module):
         unmasked_tokens = self.decoder_embedder(encoded_targets)
 
         unmasked_tokens = einops.rearrange(
-            unmasked_tokens, '... (c hw) D -> ... c hw D', c=visible_target_c, hw=visible_target_hw
+            unmasked_tokens,
+            "... (c hw) D -> ... c hw D",
+            c=visible_target_c,
+            hw=visible_target_hw,
         )
 
         # Concat unmasked tokens with mask tokens and restore order
         mask_tokens = jnp.broadcast_to(
             self.channel_mask_tokens[None, None, :, None, :],
-            b + [
+            b
+            + [
                 num_target_frames,
                 self.num_channels,
                 inds_restore.shape[-2] - unmasked_tokens.shape[-2],
                 self.channel_mask_tokens.shape[-1],
             ],
         )
-        mask_tokens = jnp.take_along_axis(mask_tokens, channel_inds[:, None, :, None, None], axis=2)
+        mask_tokens = jnp.take_along_axis(
+            mask_tokens, channel_inds[:, None, :, None, None], axis=2
+        )
         shuffled_tokens = jnp.concatenate([unmasked_tokens, mask_tokens], axis=-2)
 
-        unshuffled_tokens = jnp.take_along_axis(
-            shuffled_tokens, inds_restore, axis=-2
-        )
+        unshuffled_tokens = jnp.take_along_axis(shuffled_tokens, inds_restore, axis=-2)
 
         # Encode target deltas
         target_deltas_onehot = jax.nn.one_hot(target_deltas, 64, axis=-1)
-        delta_tokens = self.delta_embedder(
-            target_deltas_onehot)[..., None, None, :]
+        delta_tokens = self.delta_embedder(target_deltas_onehot)[..., None, None, :]
 
         # Build positional embedding for decoder tokens
         latent_posenc_shape = (
-            1, target_tokens_h, target_tokens_w,
+            1,
+            target_tokens_h,
+            target_tokens_w,
             unmasked_tokens.shape[-1],
         )
         latent_posenc = self.latent_posenc(latent_posenc_shape)
@@ -776,18 +831,19 @@ class VideoSiamMAE(nn.Module):
         unshuffled_tokens += latent_posenc
 
         unshuffled_tokens = einops.rearrange(
-            unshuffled_tokens, '... (h w) D -> ... h w D', h=target_tokens_h, w=target_tokens_w
+            unshuffled_tokens,
+            "... (h w) D -> ... h w D",
+            h=target_tokens_h,
+            w=target_tokens_w,
         )
         unshuffled_tokens = einops.rearrange(
-            unshuffled_tokens, '... c h w D -> ... (c h w) D'
+            unshuffled_tokens, "... c h w D -> ... (c h w) D"
         )
 
         to_decode = unshuffled_tokens
 
         # Prepare KV from encoded source tokens
-        inputs_kv = einops.rearrange(
-            encoded_source_tokens, '... T N D -> ... (T N) D'
-        )
+        inputs_kv = einops.rearrange(encoded_source_tokens, "... T N D -> ... (T N) D")
         inputs_kv = self.decoder_embedder(inputs_kv)
         inputs_kv = inputs_kv[..., jnp.newaxis, :, :]
         inputs_kv = jnp.tile(inputs_kv, [num_target_frames, 1, 1])
@@ -798,7 +854,8 @@ class VideoSiamMAE(nn.Module):
         # Reshape back to image space
         reconstructed = jnp.reshape(
             decoded,
-            b + [
+            b
+            + [
                 num_target_frames,
                 target_tokens_c,
                 target_tokens_h,
@@ -807,44 +864,45 @@ class VideoSiamMAE(nn.Module):
             ],
         )
         mask = jnp.reshape(
-            mask, b + [num_target_frames, target_tokens_c, target_tokens_h, target_tokens_w, 1]
+            mask,
+            b
+            + [num_target_frames, target_tokens_c, target_tokens_h, target_tokens_w, 1],
         )
-        mask = einops.rearrange(mask, '... c h w 1 -> ... h w c')
+        mask = einops.rearrange(mask, "... c h w 1 -> ... h w c")
 
         # Detokenize to pixel space
         reconstructed = self.detokenizer(reconstructed, channel_inds)
 
         return {
-            'reconstructed': reconstructed,
-            'mask': mask,
-            'state': state,
+            "reconstructed": reconstructed,
+            "mask": mask,
+            "state": state,
         }
 
 
-
-def get_rvm(num_channels, src_masking_ratio, tgt_masking_ratio, variant='M'):
-    if variant == 'L':
-        encoder_variant = 'L'
+def get_rvm(num_channels, src_masking_ratio, tgt_masking_ratio, variant="M"):
+    if variant == "L":
+        encoder_variant = "L"
         embed_dim = 1024
         rnn_heads = 16
-    elif variant == 'B':
-        encoder_variant = 'B'
+    elif variant == "B":
+        encoder_variant = "B"
         embed_dim = 768
         rnn_heads = 12
-    elif variant == 'M':
-        encoder_variant = 'M'
+    elif variant == "M":
+        encoder_variant = "M"
         embed_dim = 512
         rnn_heads = 8
-    elif variant == 'S':
-        encoder_variant = 'S'
+    elif variant == "S":
+        encoder_variant = "S"
         embed_dim = 384
         rnn_heads = 6
-    elif variant == 'Ti':
-        encoder_variant = 'Ti'
+    elif variant == "Ti":
+        encoder_variant = "Ti"
         embed_dim = 192
         rnn_heads = 3
     else:
-        raise ValueError(f'Unknown variant: {variant}')
+        raise ValueError(f"Unknown variant: {variant}")
 
     return VideoSiamMAE(
         tokenizer=MultiChannelTokenizer(
@@ -854,7 +912,8 @@ def get_rvm(num_channels, src_masking_ratio, tgt_masking_ratio, variant='M'):
             posenc=SincosPosEmb(base_token_shape=[16, 16]),
         ),
         encoder=Transformer.from_variant_str(
-            variant_str=encoder_variant, dtype=jax.numpy.bfloat16),
+            variant_str=encoder_variant, dtype=jax.numpy.bfloat16
+        ),
         rnn_core=GatedTransformerCore(
             transformer=CrossAttentionTransformer(
                 num_layers=4,
@@ -865,7 +924,9 @@ def get_rvm(num_channels, src_masking_ratio, tgt_masking_ratio, variant='M'):
             ),
             initializer=RandomStateInit(),
             token_dim=embed_dim,
-            state_layer_norm=nn.LayerNorm(epsilon=0.0001, use_scale=True, use_bias=False),
+            state_layer_norm=nn.LayerNorm(
+                epsilon=0.0001, use_scale=True, use_bias=False
+            ),
         ),
         latent_emb_dim=embed_dim,
         # Decoder components
@@ -879,9 +940,55 @@ def get_rvm(num_channels, src_masking_ratio, tgt_masking_ratio, variant='M'):
         decoder_embedder=nn.Dense(512),
         delta_embedder=nn.Dense(512),
         latent_posenc=SincosPosEmb(),
-        detokenizer=MultiChannelDetokenizer(patch_size=(16, 16), num_channels=num_channels),
+        detokenizer=MultiChannelDetokenizer(
+            patch_size=(16, 16), num_channels=num_channels
+        ),
         decoder_emb_dim=512,
         src_masking_ratio=src_masking_ratio,
         tgt_masking_ratio=tgt_masking_ratio,
         num_channels=num_channels,
     )
+
+
+def get_optimizer(
+    base_lr,
+    warmup_steps,
+    total_steps,
+    grad_accumulation_steps,
+):
+    warmup_schedule = optax.linear_schedule(
+        init_value=0.0,
+        end_value=base_lr,
+        transition_steps=warmup_steps,
+    )
+
+    cosine_schedule = optax.cosine_decay_schedule(
+        init_value=base_lr,
+        decay_steps=total_steps - warmup_steps,
+    )
+
+    schedule = optax.join_schedules(
+        schedules=[
+            warmup_schedule,
+            cosine_schedule,
+        ],
+        boundaries=[
+            warmup_steps,
+        ],
+    )
+
+    adamw = optax.adamw(
+        learning_rate=schedule,
+        weight_decay=0.05,
+        b1=0.9,
+        b2=0.95,
+        eps=1e-8,
+    )
+
+    optimizer = optax.chain(
+        optax.clip_by_global_norm(1.0),
+        adamw,
+        optax.apply_every(k=grad_accumulation_steps),
+    )
+
+    return optimizer

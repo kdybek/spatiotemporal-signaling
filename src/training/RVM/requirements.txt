@@ -11,3 +11,4 @@ einops
 scikit-learn
 scikit-image
 matplotlib
+pyyaml
