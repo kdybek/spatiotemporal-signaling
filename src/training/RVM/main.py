@@ -27,14 +27,14 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string("run_group", "Debug", "Run group.")
 flags.DEFINE_integer("seed", 0, "Random seed.")
 
-flags.DEFINE_integer("steps", 300_000, "Number of training steps.")
-flags.DEFINE_integer("eval_interval", 50_000, "Evaluation interval.")
-flags.DEFINE_integer("save_interval", 50_000, "Saving interval.")
-flags.DEFINE_integer("downstream_eval_interval", 100_000, "Downstream evaluation interval.")
+flags.DEFINE_integer("steps", 500, "Number of training steps.")
+flags.DEFINE_integer("eval_interval", 100, "Evaluation interval.")
+flags.DEFINE_integer("save_interval", 100, "Saving interval.")
+flags.DEFINE_integer("downstream_eval_interval", 100, "Downstream evaluation interval.")
 flags.DEFINE_string("dataset_path", "toy_dataset.zarr", "Path to the train dataset.")
 flags.DEFINE_string(
     "downsteam_dataset_split_config",
-    "downsteam_split.yaml",
+    "downstream_split.yaml",
     "Path to the downstream dataset split config file.",
 )
 flags.DEFINE_string("save_dir", "checkpoints", "Directory to save model checkpoints.")
@@ -190,6 +190,9 @@ def main(_):
     )
     opt_state = optimizer.init(params)
 
+    wandb.define_metric("fd_step")
+    wandb.define_metric("*", step_metric="fd_step")
+
     if FLAGS.checkpoint_path is None:
         eval_key, rng_key = jax.random.split(rng_key)
         eval_metrics = partial_evaluation(
@@ -205,7 +208,21 @@ def main(_):
             FLAGS.batch_size,
             eval_key,
         )
-        wandb.log(eval_metrics, step=0)
+        eval_metrics.update({"fd_step": 0})
+        wandb.log(eval_metrics)
+
+        downstream_eval_key, rng_key = jax.random.split(rng_key)
+        downstream_evaluation(
+            foundation_model=model,
+            foundation_model_params=params,
+            downstream_train_dataset=downstream_train_dataset,
+            downstream_test_dataset=downstream_test_dataset,
+            num_steps=FLAGS.steps // 10,
+            batch_size=FLAGS.batch_size,
+            grad_accumulation_steps=FLAGS.grad_accumulation_steps,
+            main_training_step=0,
+            rng_key=downstream_eval_key,
+        )
 
     checkpointer = ocp.Checkpointer(ocp.PyTreeCheckpointHandler())
 
@@ -285,9 +302,9 @@ def main(_):
                     foundation_model_params=params,
                     downstream_train_dataset=downstream_train_dataset,
                     downstream_test_dataset=downstream_test_dataset,
-                    num_frames=FLAGS.src_frames,
-                    num_steps=FLAGS.steps,
+                    num_steps=FLAGS.steps // 10,
                     batch_size=FLAGS.batch_size,
+                    grad_accumulation_steps=FLAGS.grad_accumulation_steps,
                     main_training_step=step,
                     rng_key=downstream_eval_key,
                 )
@@ -303,7 +320,8 @@ def main(_):
                     state,
                 )
 
-            wandb.log(metrics, step=step)
+            metrics.update({"fd_step": step})
+            wandb.log(metrics)
 
             step += 1
             if step > FLAGS.steps:

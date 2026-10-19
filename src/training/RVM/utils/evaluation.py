@@ -277,9 +277,9 @@ def downstream_evaluation(
     foundation_model_params,
     downstream_train_dataset,
     downstream_test_dataset,
-    num_frames,
     num_steps,
     batch_size,
+    grad_accumulation_steps,
     main_training_step,
     rng_key,
 ):
@@ -290,9 +290,9 @@ def downstream_evaluation(
             downstream_train_dataset,
             downstream_test_dataset,
             target,
-            num_frames,
             num_steps,
             batch_size,
+            grad_accumulation_steps,
             main_training_step,
             rng_key,
         )
@@ -304,9 +304,9 @@ def downstream_evaluation_(
     downstream_train_dataset,
     downstream_test_dataset,
     target,
-    num_frames,
     num_steps,
     batch_size,
+    grad_accumulation_steps,
     main_training_step,
     rng_key,
 ):
@@ -329,7 +329,7 @@ def downstream_evaluation_(
         base_lr=1e-4, 
         warmup_steps=int(0.05 * num_steps), 
         total_steps=num_steps, 
-        grad_accumulation_steps=1
+        grad_accumulation_steps=grad_accumulation_steps
     )
     opt_state = optimizer.init(downstream_params)
 
@@ -340,21 +340,22 @@ def downstream_evaluation_(
         src_frames,
         channel_inds,
         labels,
+        rng_key
     ):
         features = foundation_model.apply(
             {"params": foundation_model_params}, 
             src_frames, 
             channel_inds, 
-            method=foundation_model.encode
+            method=foundation_model.encode,
+            rngs={"default": rng_key}
         )
+
+        features = features.reshape(features.shape[0], -1, features.shape[-1])
         
         def loss_fn(params, features, labels):
             output = downstream_model.apply({"params": params}, features)
             logits = output["logits"]
-            one_hot_labels = jax.nn.one_hot(labels, num_classes)
-            loss = jnp.mean(
-                jnp.sum(-one_hot_labels * jax.nn.log_softmax(logits), axis=-1)
-            )
+            loss = optax.softmax_cross_entropy_with_integer_labels(logits, labels).mean()
             return loss
 
         grad_fn = jax.value_and_grad(loss_fn)
@@ -366,24 +367,25 @@ def downstream_evaluation_(
         return new_params, new_opt_state, loss
 
     @jax.jit
-    def predict(params, src_frames, channel_inds):
+    def predict(params, src_frames, channel_inds, rng_key):
         features = foundation_model.apply(
             {"params": foundation_model_params}, 
             src_frames, 
             channel_inds, 
-            method=foundation_model.encode
+            method=foundation_model.encode,
+            rngs={"default": rng_key}
         )
+        features = features.reshape(features.shape[0], -1, features.shape[-1])
         output = downstream_model.apply({"params": params}, features)
         logits = output["logits"]
         predictions = jnp.argmax(logits, axis=-1)
         return predictions
 
+    wandb.define_metric(f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_train_loss", step_metric=f"tgt_{target}_fd_step_{main_training_step}_step")
+
     for step in range(num_steps):
         loader = batch_iterator(downstream_train_dataset, batch_size=batch_size)
-        for batch in loader:
-            clips = batch["clips"]
-            channel_inds = batch["channel_inds"]
-            metadata = batch["metadata"]
+        for clips, channel_inds, metadata in tqdm(loader, desc=f"Downstream training"):
 
             clips = np.transpose(clips, (0, 1, 3, 4, 2))
 
@@ -403,23 +405,25 @@ def downstream_evaluation_(
 
             labels = np.array(labels)
 
+            step_key, rng_key = jax.random.split(rng_key)
             downstream_params, opt_state, loss = training_step(
                 downstream_params,
                 opt_state,
                 clips,
                 channel_inds,
                 labels,
+                step_key
             )
 
-            wandb.log({f"{DOWNSTREAM_SUBFOLDER}/downstream_train_loss_{main_training_step}": loss}, step=step)
+            wandb.log({
+                f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_train_loss": loss,
+                f"tgt_{target}_fd_step_{main_training_step}_step": step
+            })
 
     loader = batch_iterator(downstream_test_dataset, batch_size=batch_size)
     all_predictions = []
     all_labels = []
-    for batch in loader:
-        clips = batch["clips"]
-        channel_inds = batch["channel_inds"]
-        metadata = batch["metadata"]
+    for clips, channel_inds, metadata in tqdm(loader, desc="Downstream testing"):
 
         clips = np.transpose(clips, (0, 1, 3, 4, 2))
 
@@ -439,7 +443,8 @@ def downstream_evaluation_(
 
         labels = np.array(labels)
 
-        predictions = predict(downstream_params, clips, channel_inds)
+        pred_key, rng_key = jax.random.split(rng_key)
+        predictions = predict(downstream_params, clips, channel_inds, pred_key)
         all_predictions.extend(np.array(predictions))
         all_labels.extend(labels)
 
@@ -448,4 +453,4 @@ def downstream_evaluation_(
 
     accuracy = np.mean(all_predictions == all_labels)
 
-    wandb.log({f"{DOWNSTREAM_SUBFOLDER}/downstream_test_accuracy": accuracy}, step=main_training_step)
+    wandb.log({f"{EVAL_SUBFOLDER}/ds_tgt_{target}_test_acc": accuracy, f"fd_step": main_training_step})

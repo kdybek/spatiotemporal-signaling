@@ -49,7 +49,7 @@ def update_model(
     model_params = optax.apply_updates(model_params, updates)
 
     metrics = {
-        "training/loss": loss_value,
+        "fd_training/loss": loss_value,
     }
 
     return model_params, opt_state, metrics

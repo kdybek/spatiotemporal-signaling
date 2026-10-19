@@ -680,7 +680,6 @@ class VideoSiamMAE(nn.Module):
             all_encoded_source_tokens.append(encoded)
         encoded_source_tokens = jnp.stack(all_encoded_source_tokens, axis=-3)
 
-        '''
         features = einops.rearrange(
             encoded_source_tokens,
             "... (c h w) D -> ... c h w D",
@@ -688,9 +687,8 @@ class VideoSiamMAE(nn.Module):
             h=source_tokens_h,
             w=source_tokens_w,
         )
-        '''
 
-        return encoded_source_tokens
+        return features
 
     def __call__(
         self,

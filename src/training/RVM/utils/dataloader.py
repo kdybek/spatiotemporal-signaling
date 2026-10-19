@@ -8,6 +8,9 @@ from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
 
 
+DOWNSTREAM_EVAL_FRAMES = 4  # Number of frames to use for downstream evaluation (ugly constant for now)
+
+
 def percentile_norm(video):
     for c in range(video.shape[1]):  # per channel
         p1, p99 = np.percentile(video[:, c], (1, 99))
@@ -226,9 +229,14 @@ class DummyDataset():
         video = np.random.rand(self.clip_frames, len(self.channel_names_list), self.clip_size, self.clip_size).astype("float32")
         video = np.clip(video, 0, 1)
         channel_inds = np.arange(len(self.channel_names_list) - 1)  # Dummy channel indices
-        metadata = {"Dummy": True}  # Dummy metadata
+        metadata = {"Cell_type": f"{idx%3}", "Inhibitor": f"{idx%4}"}  # Dummy metadata
 
         return video, channel_inds, metadata
+
+    def get_all_metadata(self):
+        return [
+            {"Cell_type": f"{i%3}", "Inhibitor": f"{i%4}"} for i in range(len(self))
+        ]  # Dummy metadata for all items
 
 
 def create_train_val_datasets(
@@ -244,7 +252,12 @@ def create_train_val_datasets(
     random_crop_train=True,
     random_crop_val=False,
 ):
-    # return DummyDataset(clip_frames, clip_size, acq_freq, channel_names_list), DummyDataset(clip_frames, clip_size, acq_freq, channel_names_list)
+    return (
+        DummyDataset(clip_frames, clip_size, acq_freq, channel_names_list), 
+        DummyDataset(clip_frames, clip_size, acq_freq, channel_names_list),
+        DummyDataset(DOWNSTREAM_EVAL_FRAMES, clip_size, acq_freq, channel_names_list),
+        DummyDataset(DOWNSTREAM_EVAL_FRAMES, clip_size, acq_freq, channel_names_list)
+    )
     
     root = zarr.open(zarr_path, mode="r")
     train_root = root["train"]
@@ -314,7 +327,7 @@ def create_train_val_datasets(
     downstream_train_dataset = ZarrVideoDataset(
         root=val_root,
         video_names=downstream_train_video_names,
-        clip_frames=clip_frames,
+        clip_frames=DOWNSTREAM_EVAL_FRAMES,
         clip_size=clip_size,
         acq_freq=acq_freq,
         channel_names_list=channel_names_list,
@@ -326,7 +339,7 @@ def create_train_val_datasets(
     downstream_test_dataset = ZarrVideoDataset(
         root=val_root,
         video_names=downstream_test_video_names,
-        clip_frames=clip_frames,
+        clip_frames=DOWNSTREAM_EVAL_FRAMES,
         clip_size=clip_size,
         acq_freq=acq_freq,
         channel_names_list=channel_names_list,
