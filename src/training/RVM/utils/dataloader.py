@@ -250,7 +250,7 @@ def create_train_val_datasets(
     augment_train=True,
     augment_val=False,
     random_crop_train=True,
-    random_crop_val=False,
+    random_crop_val=True,
 ):
     '''
     return (
