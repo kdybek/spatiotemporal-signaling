@@ -427,10 +427,10 @@ def downstream_evaluation_(
 
     EVAL_SMAMPLES = 1000
 
-    loader = batch_iterator(downstream_test_dataset, batch_size=batch_size)
     all_predictions = []
     all_labels = []
     while len(all_predictions) < EVAL_SMAMPLES:
+        loader = batch_iterator(downstream_test_dataset, batch_size=batch_size)
         for clips, channel_inds, metadata in tqdm(loader, desc="Downstream testing"):
 
             clips = np.transpose(clips, (0, 1, 3, 4, 2))
