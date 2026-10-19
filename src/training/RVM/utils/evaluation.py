@@ -425,33 +425,36 @@ def downstream_evaluation_(
             if step > num_steps:
                 break
 
+    EVAL_SMAMPLES = 1000
+
     loader = batch_iterator(downstream_test_dataset, batch_size=batch_size)
     all_predictions = []
     all_labels = []
-    for clips, channel_inds, metadata in tqdm(loader, desc="Downstream testing"):
+    while len(all_predictions) < EVAL_SMAMPLES:
+        for clips, channel_inds, metadata in tqdm(loader, desc="Downstream testing"):
 
-        clips = np.transpose(clips, (0, 1, 3, 4, 2))
+            clips = np.transpose(clips, (0, 1, 3, 4, 2))
 
-        labels = []
-        for meta in metadata:
-            if target == "cell_type":
-                cell_type = meta["Cell_type"]
-                cell_type = sanitize_cell_type(cell_type)
-                label_idx = class_to_index[cell_type]
-            elif target == "treatment":
-                treatment = meta["Inhibitor"]
-                label_idx = class_to_index[treatment]
-            else:
-                raise ValueError(f"Unknown target: {target}")
-            
-            labels.append(label_idx)
+            labels = []
+            for meta in metadata:
+                if target == "cell_type":
+                    cell_type = meta["Cell_type"]
+                    cell_type = sanitize_cell_type(cell_type)
+                    label_idx = class_to_index[cell_type]
+                elif target == "treatment":
+                    treatment = meta["Inhibitor"]
+                    label_idx = class_to_index[treatment]
+                else:
+                    raise ValueError(f"Unknown target: {target}")
+                
+                labels.append(label_idx)
 
-        labels = np.array(labels)
+            labels = np.array(labels)
 
-        pred_key, rng_key = jax.random.split(rng_key)
-        predictions = predict(downstream_params, clips, channel_inds, pred_key)
-        all_predictions.extend(np.array(predictions))
-        all_labels.extend(labels)
+            pred_key, rng_key = jax.random.split(rng_key)
+            predictions = predict(downstream_params, clips, channel_inds, pred_key)
+            all_predictions.extend(np.array(predictions))
+            all_labels.extend(labels)
 
     all_predictions = np.array(all_predictions)
     all_labels = np.array(all_labels)
