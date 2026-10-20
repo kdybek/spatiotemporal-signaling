@@ -609,6 +609,10 @@ class BaselinePatcher(nn.Module):
 
     patch_size: tuple[int, int]
 
+    @property
+    def latent_emb_dim(self):
+        return self.patch_size[0] * self.patch_size[1]
+
     def __call__(self, src_frames, channel_inds):
         # src_frames: (B, T, H, W, C)
         # channel_inds: (B, c)
