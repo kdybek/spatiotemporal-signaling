@@ -28,7 +28,7 @@ flags.DEFINE_string("run_group", "Debug", "Run group.")
 flags.DEFINE_integer("seed", 0, "Random seed.")
 
 flags.DEFINE_integer("steps", 250_000, "Number of training steps.")
-flags.DEFINE_integer("eval_steps", 1_000, "Number of steps for evaluation.")
+flags.DEFINE_integer("eval_steps", 100, "Number of steps for evaluation.")
 flags.DEFINE_integer("eval_interval", 25_000, "Evaluation interval.")
 flags.DEFINE_integer("save_interval", 25_000, "Saving interval.")
 
