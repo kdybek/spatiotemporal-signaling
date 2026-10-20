@@ -175,7 +175,7 @@ def main(_):
     )
 
     if FLAGS.baseline_model:
-        baseline_model = BaselinePatcher(patch_size=(FLAGS.patch_size, FLAGS.patch_size))
+        baseline_model = BaselinePatcher(patch_size=(16, 16))
         eval_key, rng_key = jax.random.split(rng_key)
         downstream_metrics = downstream_evaluation(
             foundation_model=baseline_model,
