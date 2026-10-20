@@ -527,7 +527,6 @@ class AttentionPoolingClassifier(nn.Module):
     """Classifier with attention pooling."""
 
     num_classes: int
-    expand_dim: int = None
 
     @nn.compact
     def __call__(self, tokens):
@@ -539,13 +538,6 @@ class AttentionPoolingClassifier(nn.Module):
             logits: (..., num_classes)
             attention_weights: (..., N)
         """
-        if self.expand_dim is not None:
-            tokens = nn.Dense(
-                features=self.expand_dim,
-                kernel_init=nn.initializers.xavier_uniform(),
-                bias_init=nn.initializers.zeros,
-            )(tokens)
-            
         pooled, attention_weights = AttentionPooling()(tokens)
         pooled = nn.LayerNorm()(pooled)
         logits = nn.Dense(

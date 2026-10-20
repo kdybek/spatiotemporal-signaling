@@ -294,7 +294,6 @@ def downstream_evaluation(
     grad_accumulation_steps,
     main_training_step,
     rng_key,
-    expand_dim=None
 ):
     for target in ["cell_type", "treatment"]:
         downstream_evaluation_(
@@ -311,7 +310,6 @@ def downstream_evaluation(
             grad_accumulation_steps,
             main_training_step,
             rng_key,
-            expand_dim
         )
         
 
@@ -329,7 +327,6 @@ def downstream_evaluation_(
     grad_accumulation_steps,
     main_training_step,
     rng_key,
-    expand_dim
 ):
     classes_train = find_classes(downstream_train_dataset, target)
     classes_test = find_classes(downstream_test_dataset, target)
@@ -343,7 +340,7 @@ def downstream_evaluation_(
     print(f"Number of classes: {num_classes}")
     print(f"Classes: {classes_train}")
 
-    downstream_model = AttentionPoolingClassifier(num_classes, expand_dim=expand_dim)
+    downstream_model = AttentionPoolingClassifier(num_classes)
 
     latent_emb_dim = foundation_model.latent_emb_dim
     dummy_input = jnp.ones((1, 1, latent_emb_dim))

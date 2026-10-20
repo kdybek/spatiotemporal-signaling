@@ -190,7 +190,6 @@ def main(_):
             grad_accumulation_steps=FLAGS.grad_accumulation_steps,
             main_training_step=0,
             rng_key=eval_key,
-            expand_dim=384
         )
         return  # Exit after evaluating the baseline model
 
