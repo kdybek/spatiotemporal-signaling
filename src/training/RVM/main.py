@@ -28,14 +28,14 @@ flags.DEFINE_string("run_group", "Debug", "Run group.")
 flags.DEFINE_integer("seed", 0, "Random seed.")
 
 flags.DEFINE_integer("steps", 250_000, "Number of training steps.")
-flags.DEFINE_integer("eval_steps", 250, "Number of steps for evaluation.")
+flags.DEFINE_integer("eval_steps", 1_000, "Number of steps for evaluation.")
 flags.DEFINE_integer("eval_interval", 25_000, "Evaluation interval.")
 flags.DEFINE_integer("save_interval", 25_000, "Saving interval.")
 
 flags.DEFINE_integer("downstream_interval", 50_000, "Downstream training interval.")
-flags.DEFINE_integer("downstream_train_steps", 25_000, "Number of steps for downstream training.")
-flags.DEFINE_integer("downstream_eval_interval", 2_500, "Downstream evaluation interval.")
-flags.DEFINE_integer("downstream_eval_steps", 250, "Number of steps for downstream evaluation.")
+flags.DEFINE_integer("downstream_train_steps", 10_000, "Number of steps for downstream training.")
+flags.DEFINE_integer("downstream_eval_interval", 1_000, "Downstream evaluation interval.")
+flags.DEFINE_integer("downstream_eval_steps", 1_000, "Number of steps for downstream evaluation.")
 
 flags.DEFINE_string("dataset_path", "toy_dataset.zarr", "Path to the train dataset.")
 flags.DEFINE_string(
