@@ -361,7 +361,6 @@ def main(_):
 
             step += 1
             if step > FLAGS.steps:
-                loader.close()
                 break
 
 

@@ -3,9 +3,9 @@ import numpy as np
 import jax.numpy as jnp
 from skimage.filters import butterworth
 import math
-from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
-from queue import Queue
+from queue import Queue, Full
+from threading import Event
 
 
 DOWNSTREAM_EVAL_FRAMES = 4  # Number of frames to use for downstream evaluation (ugly constant for now)
@@ -361,38 +361,49 @@ def batch_iterator(
     prefetch_buffer_size=128,
 ):
     indices = np.arange(len(dataset))
-
     if shuffle:
         np.random.shuffle(indices)
 
     queue = Queue(maxsize=prefetch_buffer_size)
+    stop = Event()
 
     def worker(idx):
-        queue.put(dataset[idx])
+        item = dataset[idx]
+
+        while not stop.is_set():
+            try:
+                queue.put(item, timeout=0.1)
+                return
+            except Full:
+                pass
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Launch one task per sample
         futures = [executor.submit(worker, idx) for idx in indices]
 
         remaining = len(indices)
 
-        while remaining > 0:
-            n = min(batch_size, remaining)
+        try:
+            while remaining > 0:
+                n = min(batch_size, remaining)
 
-            samples = [queue.get() for _ in range(n)]
-            remaining -= n
+                samples = [queue.get() for _ in range(n)]
+                remaining -= n
 
-            clips, channel_inds, metadata = zip(*samples)
+                clips, channel_inds, metadata = zip(*samples)
 
-            clips = np.stack(clips)
-            channel_inds = np.stack(channel_inds)
-            metadata = list(metadata)
+                yield (
+                    np.stack(clips),
+                    np.stack(channel_inds),
+                    list(metadata),
+                )
 
-            yield clips, channel_inds, metadata
+            # Propagate worker exceptions
+            for f in futures:
+                f.result()
 
-        # Ensure exceptions from workers are propagated
-        for f in futures:
-            f.result()
+        finally:
+            stop.set()
+            executor.shutdown(wait=False, cancel_futures=True)
 
 
 def prepare_rvm_src_tgt_pairs(

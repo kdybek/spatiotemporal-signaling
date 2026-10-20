@@ -98,7 +98,6 @@ def compute_outputs(
 
             step += 1
             if step > eval_steps:
-                loader.close()
                 break
 
     reconstruced = np.array(reconstruced)
@@ -450,7 +449,6 @@ def downstream_evaluation_(
 
                 eval_step += 1
                 if eval_step > downstream_eval_steps:
-                    loader.close()
                     break
 
         all_predictions = np.array(all_predictions)
@@ -503,7 +501,6 @@ def downstream_evaluation_(
 
             train_step += 1
             if train_step > downstream_train_steps:
-                loader.close()
                 break
 
     return metrics
