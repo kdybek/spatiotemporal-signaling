@@ -34,7 +34,7 @@ flags.DEFINE_integer("save_interval", 25_000, "Saving interval.")
 
 flags.DEFINE_integer("downstream_interval", 50_000, "Downstream training interval.")
 flags.DEFINE_integer("downstream_train_steps", 10_000, "Number of steps for downstream training.")
-flags.DEFINE_integer("downstream_eval_interval", 1_000, "Downstream evaluation interval.")
+flags.DEFINE_integer("downstream_eval_interval", 2_000, "Downstream evaluation interval.")
 flags.DEFINE_integer("downstream_eval_steps", 1_000, "Number of steps for downstream evaluation.")
 
 flags.DEFINE_string("dataset_path", "toy_dataset.zarr", "Path to the train dataset.")
@@ -190,6 +190,7 @@ def main(_):
             grad_accumulation_steps=FLAGS.grad_accumulation_steps,
             main_training_step=0,
             rng_key=eval_key,
+            expand_dim=384
         )
         return  # Exit after evaluating the baseline model
 
