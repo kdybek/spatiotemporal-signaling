@@ -299,8 +299,9 @@ def downstream_evaluation(
     main_training_step,
     rng_key,
 ):
+    metrics = {}
     for target in ["cell_type", "treatment"]:
-        downstream_evaluation_(
+        m = downstream_evaluation_(
             foundation_model,
             foundation_model_params,
             downstream_train_dataset,
@@ -315,7 +316,10 @@ def downstream_evaluation(
             main_training_step,
             rng_key,
         )
-        
+        metrics.update(m)
+
+    return metrics
+
 
 def downstream_evaluation_(
     foundation_model,
