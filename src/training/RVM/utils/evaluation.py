@@ -116,6 +116,10 @@ def compute_outputs(
 def visualize_reconstructions(
     reconstructed, targets, masks, channel_inds, channel_names, max_samples=8
 ):
+    reconstructed = reconstructed[:max_samples]
+    targets = targets[:max_samples]
+    masks = masks[:max_samples]
+    
     reconstructed = np.clip(reconstructed, 0, 1)
     masked_view = targets * (1 - masks) + 0.5 * masks
     combined = targets * (1 - masks) + reconstructed * masks
