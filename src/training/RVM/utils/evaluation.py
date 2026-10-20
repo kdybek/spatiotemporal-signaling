@@ -32,6 +32,7 @@ def compute_outputs(
     min_offset,
     max_offset,
     batch_size,
+    eval_steps,
     rng_key,
 ):
     @jax.jit
@@ -79,19 +80,25 @@ def compute_outputs(
     masks = []
     targets = []
     channel_inds = []
-    loader = batch_iterator(test_dataset, batch_size=batch_size)
-    for clips, channel_inds_, _ in tqdm(loader, desc="Evaluation"):
-        src, tgt, offsets = prepare_rvm_src_tgt_pairs(
-            clips, src_frames, tgt_frames, src_sample_prefix, min_offset, max_offset
-        )
+    step = 1
+    while step <= eval_steps:
+        loader = batch_iterator(test_dataset, batch_size=batch_size)
+        for clips, channel_inds_, _ in tqdm(loader, desc="Evaluation"):
+            src, tgt, offsets = prepare_rvm_src_tgt_pairs(
+                clips, src_frames, tgt_frames, src_sample_prefix, min_offset, max_offset
+            )
 
-        eval_key, rng_key = jax.random.split(rng_key)
-        output = forward(src, tgt, channel_inds_, offsets, rng=eval_key)
+            eval_key, rng_key = jax.random.split(rng_key)
+            output = forward(src, tgt, channel_inds_, offsets, rng=eval_key)
 
-        reconstruced.extend(np.array(output["reconstructed"]))
-        masks.extend(np.array(output["mask"]))
-        targets.extend(np.array(output["targets"]))
-        channel_inds.extend(np.array(channel_inds_))
+            reconstruced.extend(np.array(output["reconstructed"]))
+            masks.extend(np.array(output["mask"]))
+            targets.extend(np.array(output["targets"]))
+            channel_inds.extend(np.array(channel_inds_))
+
+            step += 1
+            if step > eval_steps:
+                break
 
     reconstruced = np.array(reconstruced)
     masks = np.array(masks)
@@ -210,6 +217,7 @@ def partial_evaluation(
     min_offset,
     max_offset,
     batch_size,
+    eval_steps,
     rng_key,
 ):
     outputs = compute_outputs(
@@ -222,6 +230,7 @@ def partial_evaluation(
         min_offset,
         max_offset,
         batch_size,
+        eval_steps,
         rng_key,
     )
 
@@ -277,7 +286,9 @@ def downstream_evaluation(
     foundation_model_params,
     downstream_train_dataset,
     downstream_test_dataset,
-    num_steps,
+    downstream_train_steps,
+    downstream_eval_interval,
+    downstream_eval_steps,
     batch_size,
     grad_accumulation_steps,
     main_training_step,
@@ -290,7 +301,9 @@ def downstream_evaluation(
             downstream_train_dataset,
             downstream_test_dataset,
             target,
-            num_steps,
+            downstream_train_steps,
+            downstream_eval_interval,
+            downstream_eval_steps,
             batch_size,
             grad_accumulation_steps,
             main_training_step,
@@ -304,8 +317,11 @@ def downstream_evaluation_(
     downstream_train_dataset,
     downstream_test_dataset,
     target,
-    num_steps,
+    downstream_train_steps,
+    downstream_eval_interval,
+    downstream_eval_steps,
     batch_size,
+    base_lr,
     grad_accumulation_steps,
     main_training_step,
     rng_key,
@@ -318,6 +334,10 @@ def downstream_evaluation_(
     class_to_index = {cls: idx for idx, cls in enumerate(classes_train)}
     num_classes = len(classes_train)
 
+    print(f"Downstream evaluation for target: {target}")
+    print(f"Number of classes: {num_classes}")
+    print(f"Classes: {classes_train}")
+
     downstream_model = AttentionPoolingClassifier(num_classes)
 
     latent_emb_dim = foundation_model.latent_emb_dim
@@ -326,9 +346,9 @@ def downstream_evaluation_(
     downstream_params = downstream_model.init(init_key, dummy_input)["params"]
 
     optimizer = get_optimizer(
-        base_lr=1e-4, 
-        warmup_steps=int(0.05 * num_steps), 
-        total_steps=num_steps, 
+        base_lr=base_lr, 
+        warmup_steps=int(0.05 * downstream_train_steps), 
+        total_steps=downstream_train_steps, 
         grad_accumulation_steps=grad_accumulation_steps
     )
     opt_state = optimizer.init(downstream_params)
@@ -378,33 +398,81 @@ def downstream_evaluation_(
         features = features.reshape(features.shape[0], -1, features.shape[-1])
         output = downstream_model.apply({"params": params}, features)
         logits = output["logits"]
-        predictions = jnp.argmax(logits, axis=-1)
-        return predictions
+        
+        return logits
 
     wandb.define_metric(f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_train_loss", step_metric=f"tgt_{target}_fd_step_{main_training_step}_step")
+    wandb.define_metric(f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_test_loss", step_metric=f"tgt_{target}_fd_step_{main_training_step}_step")
+    wandb.define_metric(f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_test_accuracy", step_metric=f"tgt_{target}_fd_step_{main_training_step}_step")
 
-    step = 1
-    while step <= num_steps:
+    def get_labels_from_metadata(metadata):
+        labels = []
+        for meta in metadata:
+            if target == "cell_type":
+                cell_type = meta["Cell_type"]
+                cell_type = sanitize_cell_type(cell_type)
+                label_idx = class_to_index[cell_type]
+            elif target == "treatment":
+                treatment = meta["Inhibitor"]
+                label_idx = class_to_index[treatment]
+            else:
+                raise ValueError(f"Unknown target: {target}")
+            
+            labels.append(label_idx)
+
+        return np.array(labels)
+
+    def eval(ds_params, rng_key, train_step):
+        all_predictions = []
+        all_logits = []
+        all_labels = []
+        eval_step = 1
+        while eval_step <= downstream_eval_steps:
+            loader = batch_iterator(downstream_test_dataset, batch_size=batch_size)
+            for clips, channel_inds, metadata in tqdm(loader, desc="Downstream testing"):
+
+                clips = np.transpose(clips, (0, 1, 3, 4, 2))
+
+                labels = get_labels_from_metadata(metadata)
+
+                logits = predict(ds_params, clips, channel_inds, rng_key)
+                predictions = jnp.argmax(logits, axis=-1)
+                all_predictions.extend(np.array(predictions))
+                all_logits.extend(np.array(logits))
+                all_labels.extend(labels)
+
+                eval_step += 1
+                if eval_step > downstream_eval_steps:
+                    break
+
+        all_predictions = np.array(all_predictions)
+        all_logits = np.array(all_logits)
+        all_labels = np.array(all_labels)
+
+        accuracy = np.mean(all_predictions == all_labels)
+        loss = optax.softmax_cross_entropy_with_integer_labels(all_logits, all_labels).mean()
+
+        wandb.log({
+            f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_test_loss": loss,
+            f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_test_accuracy": accuracy,
+            f"tgt_{target}_fd_step_{main_training_step}_step": train_step
+        })
+
+        return {
+            f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_test_accuracy": accuracy,
+        }
+
+    eval_key, rng_key = jax.random.split(rng_key)
+    metrics = eval(downstream_params, eval_key, train_step=0)
+
+    train_step = 1
+    while train_step <= downstream_train_steps:
         loader = batch_iterator(downstream_train_dataset, batch_size=batch_size)
         for clips, channel_inds, metadata in tqdm(loader, desc=f"Downstream training"):
 
             clips = np.transpose(clips, (0, 1, 3, 4, 2))
 
-            labels = []
-            for meta in metadata:
-                if target == "cell_type":
-                    cell_type = meta["Cell_type"]
-                    cell_type = sanitize_cell_type(cell_type)
-                    label_idx = class_to_index[cell_type]
-                elif target == "treatment":
-                    treatment = meta["Inhibitor"]
-                    label_idx = class_to_index[treatment]
-                else:
-                    raise ValueError(f"Unknown target: {target}")
-                
-                labels.append(label_idx)
-
-            labels = np.array(labels)
+            labels = get_labels_from_metadata(metadata)
 
             step_key, rng_key = jax.random.split(rng_key)
             downstream_params, opt_state, loss = training_step(
@@ -416,49 +484,17 @@ def downstream_evaluation_(
                 step_key
             )
 
+            if train_step % downstream_eval_interval == 0:
+                eval_key, rng_key = jax.random.split(rng_key)
+                metrics = eval(downstream_params, eval_key, train_step)  # Override metrics with the latest evaluation results
+
             wandb.log({
                 f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_train_loss": loss,
-                f"tgt_{target}_fd_step_{main_training_step}_step": step
+                f"tgt_{target}_fd_step_{main_training_step}_step": train_step
             })
 
-            step += 1
-            if step > num_steps:
+            train_step += 1
+            if train_step > downstream_train_steps:
                 break
 
-    EVAL_SMAMPLES = 1000
-
-    all_predictions = []
-    all_labels = []
-    while len(all_predictions) < EVAL_SMAMPLES:
-        loader = batch_iterator(downstream_test_dataset, batch_size=batch_size)
-        for clips, channel_inds, metadata in tqdm(loader, desc="Downstream testing"):
-
-            clips = np.transpose(clips, (0, 1, 3, 4, 2))
-
-            labels = []
-            for meta in metadata:
-                if target == "cell_type":
-                    cell_type = meta["Cell_type"]
-                    cell_type = sanitize_cell_type(cell_type)
-                    label_idx = class_to_index[cell_type]
-                elif target == "treatment":
-                    treatment = meta["Inhibitor"]
-                    label_idx = class_to_index[treatment]
-                else:
-                    raise ValueError(f"Unknown target: {target}")
-                
-                labels.append(label_idx)
-
-            labels = np.array(labels)
-
-            pred_key, rng_key = jax.random.split(rng_key)
-            predictions = predict(downstream_params, clips, channel_inds, pred_key)
-            all_predictions.extend(np.array(predictions))
-            all_labels.extend(labels)
-
-    all_predictions = np.array(all_predictions)
-    all_labels = np.array(all_labels)
-
-    accuracy = np.mean(all_predictions == all_labels)
-
-    wandb.log({f"{EVAL_SUBFOLDER}/ds_tgt_{target}_test_acc": accuracy, f"fd_step": main_training_step})
+    return metrics

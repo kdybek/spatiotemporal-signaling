@@ -11,7 +11,7 @@ import os
 import wandb
 import json
 
-from utils.model import get_rvm, get_optimizer
+from utils.model import get_rvm, get_optimizer, BaselinePatcher
 from utils.logging import get_exp_name, setup_wandb
 from utils.dataloader import (
     create_train_val_datasets,
@@ -27,10 +27,16 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string("run_group", "Debug", "Run group.")
 flags.DEFINE_integer("seed", 0, "Random seed.")
 
-flags.DEFINE_integer("steps", 500, "Number of training steps.")
-flags.DEFINE_integer("eval_interval", 100, "Evaluation interval.")
-flags.DEFINE_integer("save_interval", 100, "Saving interval.")
-flags.DEFINE_integer("downstream_eval_interval", 100, "Downstream evaluation interval.")
+flags.DEFINE_integer("steps", 250_000, "Number of training steps.")
+flags.DEFINE_integer("eval_steps", 250, "Number of steps for evaluation.")
+flags.DEFINE_integer("eval_interval", 25_000, "Evaluation interval.")
+flags.DEFINE_integer("save_interval", 25_000, "Saving interval.")
+
+flags.DEFINE_integer("downstream_interval", 50_000, "Downstream training interval.")
+flags.DEFINE_integer("downstream_train_steps", 25_000, "Number of steps for downstream training.")
+flags.DEFINE_integer("downstream_eval_interval", 2_500, "Downstream evaluation interval.")
+flags.DEFINE_integer("downstream_eval_steps", 250, "Number of steps for downstream evaluation.")
+
 flags.DEFINE_string("dataset_path", "toy_dataset.zarr", "Path to the train dataset.")
 flags.DEFINE_string(
     "downsteam_dataset_split_config",
@@ -96,6 +102,8 @@ flags.DEFINE_string(
     "checkpoint_path", None, "Path to a checkpoint to load model parameters from."
 )
 
+flags.DEFINE_boolean("baseline_model", False, "Whether to use a naive baseline model.")
+
 
 def set_seed(seed):
     # Python
@@ -144,12 +152,6 @@ def main(_):
     set_seed(FLAGS.seed)
     rng_key = jax.random.PRNGKey(FLAGS.seed)
 
-    os.makedirs(FLAGS.save_dir, exist_ok=True)
-    flags_dict = FLAGS.flag_values_dict()
-
-    with open(os.path.join(FLAGS.save_dir, "config.json"), "w") as f:
-        json.dump(flags_dict, f, indent=4)
-
     transform_pipeline = TransformPipeline(
         transform_names_list=FLAGS.transforms.split(),
         arcsinh_cofactor=FLAGS.arcsinh_cofactor,
@@ -171,6 +173,31 @@ def main(_):
             downstream_split_config=downstream_split_config,
         )
     )
+
+    if FLAGS.baseline_model:
+        baseline_model = BaselinePatcher(patch_size=(FLAGS.patch_size, FLAGS.patch_size))
+        eval_key, rng_key = jax.random.split(rng_key)
+        downstream_metrics = downstream_evaluation(
+            foundation_model=baseline_model,
+            foundation_model_params={},
+            downstream_train_dataset=downstream_train_dataset,
+            downstream_test_dataset=downstream_test_dataset,
+            downstream_train_steps=FLAGS.downstream_train_steps,
+            downstream_eval_interval=FLAGS.downstream_eval_interval,
+            downstream_eval_steps=FLAGS.downstream_eval_steps,
+            batch_size=FLAGS.batch_size,
+            base_lr=FLAGS.learning_rate,
+            grad_accumulation_steps=FLAGS.grad_accumulation_steps,
+            main_training_step=0,
+            rng_key=eval_key,
+        )
+        return  # Exit after evaluating the baseline model
+
+    os.makedirs(FLAGS.save_dir, exist_ok=True)
+    flags_dict = FLAGS.flag_values_dict()
+
+    with open(os.path.join(FLAGS.save_dir, "config.json"), "w") as f:
+        json.dump(flags_dict, f, indent=4)
 
     model = get_rvm(
         num_channels=len(FLAGS.channel_names.split()),
@@ -195,7 +222,7 @@ def main(_):
 
     if FLAGS.checkpoint_path is None:
         eval_key, rng_key = jax.random.split(rng_key)
-        eval_metrics = partial_evaluation(
+        init_metrics = partial_evaluation(
             model,
             val_dataset,
             params,
@@ -206,10 +233,27 @@ def main(_):
             FLAGS.min_offset,
             FLAGS.max_offset,
             FLAGS.batch_size,
+            FLAGS.eval_steps,
             eval_key,
         )
-        eval_metrics.update({"fd_step": 0})
-        wandb.log(eval_metrics)
+        downstream_eval_key, rng_key = jax.random.split(rng_key)
+        downstream_metrics = downstream_evaluation(
+            foundation_model=model,
+            foundation_model_params=params,
+            downstream_train_dataset=downstream_train_dataset,
+            downstream_test_dataset=downstream_test_dataset,
+            downstream_train_steps=FLAGS.downstream_train_steps,
+            downstream_eval_interval=FLAGS.downstream_eval_interval,
+            downstream_eval_steps=FLAGS.downstream_eval_steps,
+            batch_size=FLAGS.batch_size,
+            base_lr=FLAGS.learning_rate,
+            grad_accumulation_steps=FLAGS.grad_accumulation_steps,
+            main_training_step=0,
+            rng_key=downstream_eval_key,
+        )
+        init_metrics.update(downstream_metrics)
+        init_metrics.update({"fd_step": 0})
+        wandb.log(init_metrics)
 
     checkpointer = ocp.Checkpointer(ocp.PyTreeCheckpointHandler())
 
@@ -278,23 +322,28 @@ def main(_):
                     FLAGS.min_offset,
                     FLAGS.max_offset,
                     FLAGS.batch_size,
+                    FLAGS.eval_steps,
                     eval_key,
                 )
                 metrics.update(eval_metrics)
 
-            if step % FLAGS.downstream_eval_interval == 0:
+            if step % FLAGS.downstream_interval == 0:
                 downstream_eval_key, rng_key = jax.random.split(rng_key)
-                downstream_evaluation(
+                downstream_metrics = downstream_evaluation(
                     foundation_model=model,
                     foundation_model_params=params,
                     downstream_train_dataset=downstream_train_dataset,
                     downstream_test_dataset=downstream_test_dataset,
-                    num_steps=FLAGS.steps // 10,
+                    downstream_train_steps=FLAGS.downstream_train_steps,
+                    downstream_eval_interval=FLAGS.downstream_eval_interval,
+                    downstream_eval_steps=FLAGS.downstream_eval_steps,
                     batch_size=FLAGS.batch_size,
+                    base_lr=FLAGS.learning_rate,
                     grad_accumulation_steps=FLAGS.grad_accumulation_steps,
                     main_training_step=step,
                     rng_key=downstream_eval_key,
                 )
+                metrics.update(downstream_metrics)
 
             if step % FLAGS.save_interval == 0:
                 state = {

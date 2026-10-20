@@ -604,6 +604,36 @@ def random_masking_with_shared_dim(rng_key, tokens, mask_ratio, share_S):
     return visible_tokens, inds_restore, mask
 
 
+class BaselinePatcher(nn.Module):
+    """Baseline patcher that extracts patches from the input frames."""
+
+    patch_size: tuple[int, int]
+
+    def __call__(self, src_frames, channel_inds):
+        # src_frames: (B, T, H, W, C)
+        # channel_inds: (B, c)
+
+        src_frames = jnp.take_along_axis(src_frames, channel_inds[:, None, None, None, :], axis=-1)
+
+        assert src_frames.shape[-1] == channel_inds.shape[-1], "Number of channels in src_frames must match channel_inds."
+
+        B, T, H, W, c = src_frames.shape
+        h, w = self.patch_size
+        assert H % h == 0 and W % w == 0, "Frame dimensions must be divisible by patch size."
+
+        # Reshape to extract patches
+        features = einops.rearrange(
+            src_frames,
+            "b t (h ph) (w pw) c -> b t c h w (ph pw)",
+            ph=h,
+            pw=w,
+        )
+        return features
+
+    def encode(self, source_frames, channel_inds):
+        return self(source_frames, channel_inds)
+
+
 class VideoSiamMAE(nn.Module):
     """Video Siamese masked autoencoder model."""
 
