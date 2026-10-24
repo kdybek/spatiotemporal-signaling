@@ -283,6 +283,8 @@ def main(_):
             rng_key,
         )
 
+    measure_flops = True  # Set to True to measure FLOPs for the first training step
+
     while step <= FLAGS.steps:
         loader = batch_iterator(train_dataset, batch_size=FLAGS.batch_size)
         for clips, channel_inds, _ in tqdm(loader, desc="Training epoch"):
@@ -308,6 +310,20 @@ def main(_):
                 train_key,
             )
             metrics.update(train_metrics)
+
+            if measure_flops:
+                compiled = training_step.lower(
+                    params,
+                    opt_state,
+                    src,
+                    tgt,
+                    channel_inds,
+                    offsets,
+                    train_key,
+                ).compile()
+                cost = compiled.cost_analysis()
+                print("Training step cost analysis:", cost)
+                measure_flops = False  # Only measure FLOPs for the first training step
 
             if step % FLAGS.eval_interval == 0:
                 eval_key, rng_key = jax.random.split(rng_key)
