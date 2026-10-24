@@ -322,7 +322,11 @@ def main(_):
                     train_key,
                 ).compile()
                 cost = compiled.cost_analysis()
-                print("Training step cost analysis:", cost)
+                wandb.log({
+                    "training_step_flops": cost["flops"],
+                    "training_step_bytes_accessed": cost["bytes accessed"],
+                    "training_step_transcendentals": cost["transcendentals"],
+                })
                 measure_flops = False  # Only measure FLOPs for the first training step
 
             if step % FLAGS.eval_interval == 0:
