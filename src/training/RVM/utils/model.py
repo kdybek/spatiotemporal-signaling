@@ -765,17 +765,16 @@ class VideoSiamMAE(nn.Module):
         source_tokens = source_tokens + channel_embs[:, None, :, None, None, :]
         target_tokens = target_tokens + channel_embs[:, None, :, None, None, :]
 
-        # Flatten source tokens
-        source_tokens = einops.rearrange(source_tokens, "... t c h w D -> ... c t (h w) D")
-
         if self.src_masking_ratio > 0.0:
-            # Mask source tokens (masks are shared across the time dimension)
+            source_tokens = einops.rearrange(source_tokens, "... h w D -> ... (h w) D")
+            # Mask source tokens
             rng_key, src_mask_key = jax.random.split(rng_key)
             source_tokens, _, _ = random_masking_with_shared_dim(
-                src_mask_key, source_tokens, self.src_masking_ratio, share_S=True
+                src_mask_key, source_tokens, self.src_masking_ratio, share_S=False
             )
-
-        source_tokens = einops.rearrange(source_tokens, "... c t n D -> ... t (c n) D")
+            source_tokens = einops.rearrange(source_tokens, "... c n D -> ... (c n) D")
+        else:
+            source_tokens = einops.rearrange(source_tokens, "... c h w D -> ... (c h w) D")
 
         # Mask target tokens (masks are shared across the channel dimension)
         target_tokens_flat = einops.rearrange(target_tokens, "... h w D -> ... (h w) D")
