@@ -350,8 +350,7 @@ def main(_):
                 downstream_metrics = downstream_evaluation(
                     foundation_model=model,
                     foundation_model_params=params,
-                    downstream_train_dataset=downstream_train_dataset,
-                    downstream_test_dataset=downstream_test_dataset,
+                    downstream_datasets=downstream_datasets,
                     downstream_train_steps=FLAGS.downstream_train_steps,
                     downstream_eval_interval=FLAGS.downstream_eval_interval,
                     downstream_eval_steps=FLAGS.downstream_eval_steps,
