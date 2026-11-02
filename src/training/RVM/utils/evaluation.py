@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 import re
 
 from utils.dataloader import batch_iterator, prepare_rvm_src_tgt_pairs
-from utils.model import get_optimizer, AttentionPoolingClassifier
+from utils.model import get_optimizer, AttentionPoolingClassifier, AttentionPoolingOrderClassifier
 
 EVAL_SUBFOLDER = "evaluation"
 DOWNSTREAM_SUBFOLDER = "downstream"
@@ -279,10 +279,44 @@ def find_classes(dataset, target):
         elif target == "treatment":
             treatment = metadata["Inhibitor"]
             classes.add(treatment)
+        elif target == "cell_type_treatment":
+            cell_type = metadata["Cell_type"]
+            cell_type = sanitize_cell_type(cell_type)
+            treatment = metadata["Inhibitor"]
+            classes.add(f"{cell_type}_{treatment}")
+        elif target in ["order_same_loc", "order_diff_loc"]:
+            classes = set([0, 1])
+            break
         else:
             raise ValueError(f"Unknown target: {target}")
 
     return sorted(list(classes))
+
+
+def get_labels(metadata, target, class_to_index, t1, t2):
+    labels = []
+    for meta in metadata:
+        if target == "cell_type":
+            cell_type = meta["Cell_type"]
+            cell_type = sanitize_cell_type(cell_type)
+            label_idx = class_to_index[cell_type]
+        elif target == "treatment":
+            treatment = meta["Inhibitor"]
+            label_idx = class_to_index[treatment]
+        elif target == "cell_type_treatment":
+            cell_type = meta["Cell_type"]
+            cell_type = sanitize_cell_type(cell_type)
+            treatment = meta["Inhibitor"]
+            label_idx = class_to_index[f"{cell_type}_{treatment}"]
+        elif target in ["order_same_loc", "order_diff_loc"]:
+            labels = [0 if t1_ < t2_ else 1 for t1_, t2_ in zip(t1, t2)]
+            break
+        else:
+            raise ValueError(f"Unknown target: {target}")
+
+        labels.append(label_idx)
+
+    return np.array(labels)
 
 
 def downstream_evaluation(
@@ -298,24 +332,20 @@ def downstream_evaluation(
     main_training_step,
     rng_key,
 ):
-    metrics = {}
-    for target in ["cell_type", "treatment"]:
-        m = downstream_evaluation_(
-            foundation_model,
-            foundation_model_params,
-            downstream_datasets["train_4frames"],
-            downstream_datasets["test_4frames"],
-            target,
-            downstream_train_steps,
-            downstream_eval_interval,
-            downstream_eval_steps,
-            batch_size,
-            base_lr,
-            grad_accumulation_steps,
-            main_training_step,
-            rng_key,
-        )
-        metrics.update(m)
+    metrics = downstream_evaluation_(
+        foundation_model,
+        foundation_model_params,
+        downstream_datasets["train_4frames"],
+        downstream_datasets["test_4frames"],
+        downstream_train_steps,
+        downstream_eval_interval,
+        downstream_eval_steps,
+        batch_size,
+        base_lr,
+        grad_accumulation_steps,
+        main_training_step,
+        rng_key,
+    )
 
     return metrics
 
@@ -325,7 +355,6 @@ def downstream_evaluation_(
     foundation_model_params,
     downstream_train_dataset,
     downstream_test_dataset,
-    target,
     downstream_train_steps,
     downstream_eval_interval,
     downstream_eval_steps,
@@ -335,68 +364,55 @@ def downstream_evaluation_(
     main_training_step,
     rng_key,
 ):
-    classes_train = find_classes(downstream_train_dataset, target)
-    classes_test = find_classes(downstream_test_dataset, target)
+    TARGETS = ["cell_type", "treatment", "cell_type_treatment", "order_same_loc", "order_diff_loc"]
 
-    assert set(classes_train) == set(classes_test), "Train and test classes must match."
+    downstream_models_dict = {}
+    downstream_params_dict = {}
+    optimizers_dict = {}
+    opt_states_dict = {}
+    class_to_index_dict = {}
+    num_classes_dict = {}
+    for target in TARGETS:
+        classes_train = find_classes(downstream_train_dataset, target)
+        classes_test = find_classes(downstream_test_dataset, target)
 
-    class_to_index = {cls: idx for idx, cls in enumerate(classes_train)}
-    num_classes = len(classes_train)
+        assert set(classes_train) == set(classes_test), "Train and test classes must match."
 
-    print(f"Downstream evaluation for target: {target}")
-    print(f"Number of classes: {num_classes}")
-    print(f"Classes: {classes_train}")
+        class_to_index = {cls: idx for idx, cls in enumerate(classes_train)}
+        num_classes = len(classes_train)
 
-    downstream_model = AttentionPoolingClassifier(num_classes)
+        print(f"Downstream evaluation for target: {target}")
+        print(f"Number of classes: {num_classes}")
+        print(f"Classes: {classes_train}")
 
-    latent_emb_dim = foundation_model.latent_emb_dim
-    dummy_input = jnp.ones((1, 1, latent_emb_dim))
-    init_key, rng_key = jax.random.split(rng_key)
-    downstream_params = downstream_model.init(init_key, dummy_input)["params"]
+        downstream_model = AttentionPoolingClassifier(num_classes) if target not in ["order_same_loc", "order_diff_loc"] else AttentionPoolingOrderClassifier()
 
-    optimizer = get_optimizer(
-        base_lr=base_lr, 
-        warmup_steps=int(0.05 * downstream_train_steps), 
-        total_steps=downstream_train_steps, 
-        grad_accumulation_steps=grad_accumulation_steps
-    )
-    opt_state = optimizer.init(downstream_params)
+        latent_emb_dim = foundation_model.latent_emb_dim
+        dummy_input1 = jnp.ones((1, 1, latent_emb_dim))
+        init_key, rng_key = jax.random.split(rng_key)
+        if target not in ["order_same_loc", "order_diff_loc"]:
+            params = downstream_model.init(init_key, dummy_input1)["params"]
+        else:
+            dummy_input2 = jnp.ones((1, 1, latent_emb_dim))
+            params = downstream_model.init(init_key, dummy_input1, dummy_input2)["params"]
 
-    @jax.jit
-    def training_step(
-        params,
-        opt_state,
-        src_frames,
-        channel_inds,
-        labels,
-        rng_key
-    ):
-        features = foundation_model.apply(
-            {"params": foundation_model_params}, 
-            src_frames, 
-            channel_inds, 
-            method=foundation_model.encode,
-            rngs={"default": rng_key}
+        optimizer = get_optimizer(
+            base_lr=base_lr, 
+            warmup_steps=int(0.05 * downstream_train_steps), 
+            total_steps=downstream_train_steps, 
+            grad_accumulation_steps=grad_accumulation_steps
         )
+        opt_state = optimizer.init(params)
 
-        features = features.reshape(features.shape[0], -1, features.shape[-1])
-        
-        def loss_fn(params, features, labels):
-            output = downstream_model.apply({"params": params}, features)
-            logits = output["logits"]
-            loss = optax.softmax_cross_entropy_with_integer_labels(logits, labels).mean()
-            return loss
-
-        grad_fn = jax.value_and_grad(loss_fn)
-        loss, grads = grad_fn(params, features, labels)
-
-        updates, new_opt_state = optimizer.update(grads, opt_state, params)
-        new_params = optax.apply_updates(params, updates)
-
-        return new_params, new_opt_state, loss
+        downstream_models_dict[target] = downstream_model
+        downstream_params_dict[target] = params
+        optimizers_dict[target] = optimizer
+        opt_states_dict[target] = opt_state
+        class_to_index_dict[target] = class_to_index
+        num_classes_dict[target] = num_classes
 
     @jax.jit
-    def predict(params, src_frames, channel_inds, rng_key):
+    def extract_features(src_frames, channel_inds, rng_key):
         features = foundation_model.apply(
             {"params": foundation_model_params}, 
             src_frames, 
@@ -405,108 +421,220 @@ def downstream_evaluation_(
             rngs={"default": rng_key}
         )
         features = features.reshape(features.shape[0], -1, features.shape[-1])
-        output = downstream_model.apply({"params": params}, features)
-        logits = output["logits"]
-        
-        return logits
+        return features
 
-    wandb.define_metric(f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_train_loss", step_metric=f"tgt_{target}_fd_step_{main_training_step}_step")
-    wandb.define_metric(f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_test_loss", step_metric=f"tgt_{target}_fd_step_{main_training_step}_step")
-    wandb.define_metric(f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_test_accuracy", step_metric=f"tgt_{target}_fd_step_{main_training_step}_step")
+    def make_training_step(target):
+        downstream_model = downstream_models_dict[target]
+        optimizer = optimizers_dict[target]
 
-    def get_labels_from_metadata(metadata):
-        labels = []
-        for meta in metadata:
-            if target == "cell_type":
-                cell_type = meta["Cell_type"]
-                cell_type = sanitize_cell_type(cell_type)
-                label_idx = class_to_index[cell_type]
-            elif target == "treatment":
-                treatment = meta["Inhibitor"]
-                label_idx = class_to_index[treatment]
-            else:
-                raise ValueError(f"Unknown target: {target}")
-            
-            labels.append(label_idx)
+        @jax.jit
+        def training_step(
+            params,
+            opt_state,
+            features,
+            features_same_loc_t2,
+            features_diff_loc_t2,
+            labels,
+        ):
+            def loss_fn(params_):
+                output = downstream_model.apply({"params": params_}, features)
+                logits = output["logits"]
+                loss = optax.softmax_cross_entropy_with_integer_labels(logits, labels).mean()
+                return loss
 
-        return np.array(labels)
+            def loss_fn_order_same_loc(params_):
+                output = downstream_model.apply({"params": params_}, features,features_same_loc_t2)
+                logits = output["logits"]
+                loss = optax.softmax_cross_entropy_with_integer_labels(logits, labels).mean()
+                return loss
 
-    def eval(ds_params, rng_key, train_step):
-        all_predictions = []
-        all_logits = []
-        all_labels = []
+            def loss_fn_order_diff_loc(params_):
+                output = downstream_model.apply({"params": params_}, features,features_diff_loc_t2)
+                logits = output["logits"]
+                loss = optax.softmax_cross_entropy_with_integer_labels(logits, labels).mean()
+                return loss
+
+
+            grad_fn = jax.value_and_grad(loss_fn)
+            grad_fn_order_same_loc = jax.value_and_grad(loss_fn_order_same_loc)
+            grad_fn_order_diff_loc = jax.value_and_grad(loss_fn_order_diff_loc)
+
+            if target not in ["order_same_loc", "order_diff_loc"]:
+                loss, grads = grad_fn(params, features, labels)
+            elif target == "order_same_loc":
+                loss, grads = grad_fn_order_same_loc(params, features, features_same_loc_t2, labels)
+            elif target == "order_diff_loc":
+                loss, grads = grad_fn_order_diff_loc(params, features, features_diff_loc_t2, labels)
+
+            updates, new_opt_state = optimizer.update(grads, opt_state, params)
+            new_params = optax.apply_updates(params, updates)
+
+            return new_params, new_opt_state, loss
+
+        return training_step
+
+    def make_predict(target):
+        downstream_model = downstream_models_dict[target]
+
+        @jax.jit
+        def predict(
+            params, 
+            features,
+            features_same_loc_t2,
+            features_diff_loc_t2,
+        ):
+            if target not in ["order_same_loc", "order_diff_loc"]:
+                output = downstream_model.apply({"params": params}, features)
+            elif target == "order_same_loc":
+                output = downstream_model.apply({"params": params}, features, features_same_loc_t2)
+            elif target == "order_diff_loc":
+                output = downstream_model.apply({"params": params}, features, features_diff_loc_t2)
+
+            return output["logits"]
+
+        return predict
+    
+    training_funcs = {}
+    predict_funcs = {}
+    for target in TARGETS:
+        training_funcs[target] = make_training_step(target)
+        predict_funcs[target] = make_predict(target)
+
+        wandb.define_metric(
+            f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_train_loss", 
+            step_metric=f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_step"
+        )
+        wandb.define_metric(
+            f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_test_loss", 
+            step_metric=f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_step"
+        )
+        wandb.define_metric(
+            f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_test_accuracy", 
+            step_metric=f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_step"
+        )
+
+    def eval(rng_key, train_step):
+        all_predictions = {}
+        all_logits = {}
+        all_labels = {}
+
+        for target in TARGETS:
+            all_predictions[target] = []
+            all_logits[target] = []
+            all_labels[target] = []
+
         eval_step = 1
         while eval_step <= downstream_eval_steps:
             loader = batch_iterator(downstream_test_dataset, batch_size=batch_size)
             for out in tqdm(loader, desc="Downstream testing"):
                 clips = out["clips"]
+                clips_same_loc_t2 = out["clips_same_loc_t2"]
+                clips_diff_loc_t2 = out["clips_diff_loc_t2"]
                 channel_inds = out["channel_inds"]
                 metadata = out["metadata"]
+                t1 = out["t1"]
+                t2 = out["t2"]
 
                 clips = np.transpose(clips, (0, 1, 3, 4, 2))
+                clips_same_loc_t2 = np.transpose(clips_same_loc_t2, (0, 1, 3, 4, 2))
+                clips_diff_loc_t2 = np.transpose(clips_diff_loc_t2, (0, 1, 3, 4, 2))
 
-                labels = get_labels_from_metadata(metadata)
+                rng_key1, rng_key2, rng_key3 = jax.random.split(rng_key, 3)
+                features = extract_features(clips, channel_inds, rng_key1)
+                features_same_loc_t2 = extract_features(clips_same_loc_t2, channel_inds, rng_key2)
+                features_diff_loc_t2 = extract_features(clips_diff_loc_t2, channel_inds, rng_key3)
 
-                logits = predict(ds_params, clips, channel_inds, rng_key)
-                predictions = jnp.argmax(logits, axis=-1)
-                all_predictions.extend(np.array(predictions))
-                all_logits.extend(np.array(logits))
-                all_labels.extend(labels)
+                for target in TARGETS:
+                    predict = predict_funcs[target]
+                    params = downstream_params_dict[target]
+
+                    logits = predict(
+                        params,
+                        features,
+                        features_same_loc_t2,
+                        features_diff_loc_t2,
+                    )
+
+                    labels = get_labels(metadata, target, class_to_index[target], t1, t2)
+
+                    predictions = jnp.argmax(logits, axis=-1)
+                    all_predictions[target].extend(np.array(predictions))
+                    all_logits[target].extend(np.array(logits))
+                    all_labels[target].extend(labels)
 
                 eval_step += 1
                 if eval_step > downstream_eval_steps:
                     break
 
-        all_predictions = np.array(all_predictions)
-        all_logits = np.array(all_logits)
-        all_labels = np.array(all_labels)
+        metrics = {}
+        for target in TARGETS:
+            all_predictions[target] = np.array(all_predictions[target])
+            all_logits[target] = np.array(all_logits[target])
+            all_labels[target] = np.array(all_labels[target])
 
-        accuracy = np.mean(all_predictions == all_labels)
-        loss = optax.softmax_cross_entropy_with_integer_labels(all_logits, all_labels).mean()
+            accuracy = np.mean(all_predictions[target] == all_labels[target])
+            loss = optax.softmax_cross_entropy_with_integer_labels(all_logits[target], all_labels[target]).mean()
 
-        wandb.log({
-            f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_test_loss": loss,
-            f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_test_accuracy": accuracy,
-            f"tgt_{target}_fd_step_{main_training_step}_step": train_step
-        })
+            wandb.log({
+                f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_test_loss": loss,
+                f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_test_accuracy": accuracy,
+                f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_step": train_step
+            })
 
-        return {
-            f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_test_accuracy": accuracy,
-        }
+            metrics[f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_test_accuracy"] = accuracy
+
+        return metrics
 
     eval_key, rng_key = jax.random.split(rng_key)
-    metrics = eval(downstream_params, eval_key, train_step=0)
+    metrics = eval(eval_key, train_step=0)
 
     train_step = 1
     while train_step <= downstream_train_steps:
         loader = batch_iterator(downstream_train_dataset, batch_size=batch_size)
         for out in tqdm(loader, desc=f"Downstream training"):
             clips = out["clips"]
+            clips_same_loc_t2 = out["clips_same_loc_t2"]
+            clips_diff_loc_t2 = out["clips_diff_loc_t2"]
             channel_inds = out["channel_inds"]
             metadata = out["metadata"]
+            t1 = out["t1"]
+            t2 = out["t2"]
 
             clips = np.transpose(clips, (0, 1, 3, 4, 2))
+            clips_same_loc_t2 = np.transpose(clips_same_loc_t2, (0, 1, 3, 4, 2))
+            clips_diff_loc_t2 = np.transpose(clips_diff_loc_t2, (0, 1, 3, 4, 2))
 
-            labels = get_labels_from_metadata(metadata)
+            rng_key1, rng_key2, rng_key3 = jax.random.split(rng_key, 3)
+            features = extract_features(clips, channel_inds, rng_key1)
+            features_same_loc_t2 = extract_features(clips_same_loc_t2, channel_inds, rng_key2)
+            features_diff_loc_t2 = extract_features(clips_diff_loc_t2, channel_inds, rng_key3)
 
-            step_key, rng_key = jax.random.split(rng_key)
-            downstream_params, opt_state, loss = training_step(
-                downstream_params,
-                opt_state,
-                clips,
-                channel_inds,
-                labels,
-                step_key
-            )
+            for target in TARGETS:
+                training_step = training_funcs[target]
+                params = downstream_params_dict[target]
+                opt_state = opt_states_dict[target]
+
+                labels = get_labels(metadata, target, class_to_index[target], t1, t2)
+                params, opt_state, loss = training_step(
+                    params,
+                    opt_state,
+                    features,
+                    features_same_loc_t2,
+                    features_diff_loc_t2,
+                    labels,
+                )
+
+                downstream_params_dict[target] = params
+                opt_states_dict[target] = opt_state
+
+                wandb.log({
+                    f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_train_loss": loss,
+                    f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_step": train_step
+                })
 
             if train_step % downstream_eval_interval == 0:
                 eval_key, rng_key = jax.random.split(rng_key)
-                metrics = eval(downstream_params, eval_key, train_step)  # Override metrics with the latest evaluation results
-
-            wandb.log({
-                f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_train_loss": loss,
-                f"tgt_{target}_fd_step_{main_training_step}_step": train_step
-            })
+                metrics = eval(eval_key, train_step)  # Override metrics with the latest evaluation results
 
             train_step += 1
             if train_step > downstream_train_steps:

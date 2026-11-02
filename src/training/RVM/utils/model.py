@@ -552,6 +552,39 @@ class AttentionPoolingClassifier(nn.Module):
         }
 
 
+class AttentionPoolingOrderClassifier(nn.Module):
+    """Classifier with attention pooling."""
+
+    @nn.compact
+    def __call__(self, tokens1, tokens2):
+        """
+        Args:
+            tokens1: (..., N, D)
+            tokens2: (..., N, D)
+
+        Returns:
+            logits: (..., num_classes)
+            attention_weights1: (..., N)
+            attention_weights2: (..., N)
+        """
+        attention_pooler = AttentionPooling()
+
+        pooled1, attention_weights1 = attention_pooler(tokens1)
+        pooled2, attention_weights2 = attention_pooler(tokens2)
+        pooled = nn.LayerNorm()(pooled1 - pooled2)
+        logits = nn.Dense(
+            features=2,
+            kernel_init=nn.initializers.xavier_uniform(),
+            bias_init=nn.initializers.zeros,
+        )(pooled)
+
+        return {
+            "logits": logits,
+            "attention_weights1": attention_weights1,
+            "attention_weights2": attention_weights2,
+        }
+
+
 def random_masking_with_shared_dim(rng_key, tokens, mask_ratio, share_S):
     """Random masking: shuffle tokens and return visible/masked split info.
 
