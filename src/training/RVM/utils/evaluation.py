@@ -460,11 +460,11 @@ def downstream_evaluation_(
             grad_fn_order_diff_loc = jax.value_and_grad(loss_fn_order_diff_loc)
 
             if target not in ["order_same_loc", "order_diff_loc"]:
-                loss, grads = grad_fn(params, features, labels)
+                loss, grads = grad_fn(params)
             elif target == "order_same_loc":
-                loss, grads = grad_fn_order_same_loc(params, features, features_same_loc_t2, labels)
+                loss, grads = grad_fn_order_same_loc(params)
             elif target == "order_diff_loc":
-                loss, grads = grad_fn_order_diff_loc(params, features, features_diff_loc_t2, labels)
+                loss, grads = grad_fn_order_diff_loc(params)
 
             updates, new_opt_state = optimizer.update(grads, opt_state, params)
             new_params = optax.apply_updates(params, updates)
@@ -539,7 +539,7 @@ def downstream_evaluation_(
                 clips_same_loc_t2 = np.transpose(clips_same_loc_t2, (0, 1, 3, 4, 2))
                 clips_diff_loc_t2 = np.transpose(clips_diff_loc_t2, (0, 1, 3, 4, 2))
 
-                rng_key1, rng_key2, rng_key3 = jax.random.split(rng_key, 3)
+                rng_key1, rng_key2, rng_key3, rng_key = jax.random.split(rng_key, 4)
                 features = extract_features(clips, channel_inds, rng_key1)
                 features_same_loc_t2 = extract_features(clips_same_loc_t2, channel_inds, rng_key2)
                 features_diff_loc_t2 = extract_features(clips_diff_loc_t2, channel_inds, rng_key3)
@@ -555,7 +555,7 @@ def downstream_evaluation_(
                         features_diff_loc_t2,
                     )
 
-                    labels = get_labels(metadata, target, class_to_index[target], t1, t2)
+                    labels = get_labels(metadata, target, class_to_index_dict[target], t1, t2)
 
                     predictions = jnp.argmax(logits, axis=-1)
                     all_predictions[target].extend(np.array(predictions))
@@ -604,7 +604,7 @@ def downstream_evaluation_(
             clips_same_loc_t2 = np.transpose(clips_same_loc_t2, (0, 1, 3, 4, 2))
             clips_diff_loc_t2 = np.transpose(clips_diff_loc_t2, (0, 1, 3, 4, 2))
 
-            rng_key1, rng_key2, rng_key3 = jax.random.split(rng_key, 3)
+            rng_key1, rng_key2, rng_key3, rng_key = jax.random.split(rng_key, 4)
             features = extract_features(clips, channel_inds, rng_key1)
             features_same_loc_t2 = extract_features(clips_same_loc_t2, channel_inds, rng_key2)
             features_diff_loc_t2 = extract_features(clips_diff_loc_t2, channel_inds, rng_key3)
@@ -614,7 +614,7 @@ def downstream_evaluation_(
                 params = downstream_params_dict[target]
                 opt_state = opt_states_dict[target]
 
-                labels = get_labels(metadata, target, class_to_index[target], t1, t2)
+                labels = get_labels(metadata, target, class_to_index_dict[target], t1, t2)
                 params, opt_state, loss = training_step(
                     params,
                     opt_state,
