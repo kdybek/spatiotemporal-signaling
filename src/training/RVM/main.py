@@ -162,7 +162,7 @@ def main(_):
 
     downstream_split_config = load_split_config(FLAGS.downsteam_dataset_split_config)
 
-    train_dataset, val_dataset, downstream_train_dataset, downstream_test_dataset = (
+    train_dataset, val_dataset, downstream_datasets = (
         create_train_val_datasets(
             zarr_path=FLAGS.dataset_path,
             clip_frames=FLAGS.clip_frames,
@@ -180,8 +180,7 @@ def main(_):
         downstream_metrics = downstream_evaluation(
             foundation_model=baseline_model,
             foundation_model_params={},
-            downstream_train_dataset=downstream_train_dataset,
-            downstream_test_dataset=downstream_test_dataset,
+            downstream_datasets=downstream_datasets,
             downstream_train_steps=FLAGS.downstream_train_steps,
             downstream_eval_interval=FLAGS.downstream_eval_interval,
             downstream_eval_steps=FLAGS.downstream_eval_steps,
@@ -243,8 +242,7 @@ def main(_):
     downstream_metrics = downstream_evaluation(
         foundation_model=model,
         foundation_model_params=params,
-        downstream_train_dataset=downstream_train_dataset,
-        downstream_test_dataset=downstream_test_dataset,
+        downstream_datasets=downstream_datasets,
         downstream_train_steps=FLAGS.downstream_train_steps,
         downstream_eval_interval=FLAGS.downstream_eval_interval,
         downstream_eval_steps=FLAGS.downstream_eval_steps,

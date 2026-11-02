@@ -288,8 +288,7 @@ def find_classes(dataset, target):
 def downstream_evaluation(
     foundation_model,
     foundation_model_params,
-    downstream_train_dataset,
-    downstream_test_dataset,
+    downstream_datasets,
     downstream_train_steps,
     downstream_eval_interval,
     downstream_eval_steps,
@@ -304,8 +303,8 @@ def downstream_evaluation(
         m = downstream_evaluation_(
             foundation_model,
             foundation_model_params,
-            downstream_train_dataset,
-            downstream_test_dataset,
+            downstream_datasets["train_4frames"],
+            downstream_datasets["test_4frames"],
             target,
             downstream_train_steps,
             downstream_eval_interval,
@@ -439,7 +438,10 @@ def downstream_evaluation_(
         eval_step = 1
         while eval_step <= downstream_eval_steps:
             loader = batch_iterator(downstream_test_dataset, batch_size=batch_size)
-            for clips, channel_inds, metadata in tqdm(loader, desc="Downstream testing"):
+            for out in tqdm(loader, desc="Downstream testing"):
+                clips = out["clips"]
+                channel_inds = out["channel_inds"]
+                metadata = out["metadata"]
 
                 clips = np.transpose(clips, (0, 1, 3, 4, 2))
 
@@ -478,7 +480,10 @@ def downstream_evaluation_(
     train_step = 1
     while train_step <= downstream_train_steps:
         loader = batch_iterator(downstream_train_dataset, batch_size=batch_size)
-        for clips, channel_inds, metadata in tqdm(loader, desc=f"Downstream training"):
+        for out in tqdm(loader, desc=f"Downstream training"):
+            clips = out["clips"]
+            channel_inds = out["channel_inds"]
+            metadata = out["metadata"]
 
             clips = np.transpose(clips, (0, 1, 3, 4, 2))
 

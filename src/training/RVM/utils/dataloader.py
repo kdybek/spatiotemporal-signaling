@@ -67,7 +67,20 @@ def find_chunk_size(zarr_chunk, frames):
     return zarr_chunk
 
 
-def get_clip(root, video_name, clip_frames, clip_size, acq_freq, channel_names_list, random_crop, num_available_channels=3, validation=False):
+def get_clip(
+        root, 
+        video_name, 
+        clip_frames, 
+        clip_size, 
+        acq_freq, 
+        channel_names_list, 
+        random_crop, 
+        num_available_channels=3, 
+        validation=False,
+        downstream=False
+    ):
+    assert not (downstream and not random_crop), "Downstream evaluation requires random cropping to be enabled."
+
     video_shape = root[video_name].shape
     video_metadata = root[video_name].attrs["Metadata"]
     channel_indices = [video_metadata.get(f"{name}_idx", 0) for name in channel_names_list]
@@ -106,6 +119,10 @@ def get_clip(root, video_name, clip_frames, clip_size, acq_freq, channel_names_l
         start_t = np.random.randint(0, T - min_frames_needed + 1)
         start_h = np.random.randint(0, H - clip_size + 1)
         start_w = np.random.randint(0, W - clip_size + 1)
+        if downstream:
+            start_t2 = np.random.randint(0, T - min_frames_needed + 1)
+            start_h2 = np.random.randint(0, H - clip_size + 1)
+            start_w2 = np.random.randint(0, W - clip_size + 1)
     else:
         start_t = (T - min_frames_needed) // 2
         start_h = (H - clip_size) // 2
@@ -116,14 +133,41 @@ def get_clip(root, video_name, clip_frames, clip_size, acq_freq, channel_names_l
     start_t = snap_to_chunk_size(start_t, optimal_chunk_size_t)
     start_h = snap_to_chunk_size(start_h, root[video_name].chunks[2])
     start_w = snap_to_chunk_size(start_w, root[video_name].chunks[3])
+    if downstream:
+        start_t2 = snap_to_chunk_size(start_t2, optimal_chunk_size_t)
+        start_h2 = snap_to_chunk_size(start_h2, root[video_name].chunks[2])
+        start_w2 = snap_to_chunk_size(start_w2, root[video_name].chunks[3])
+
+        while start_t == start_t2:
+            start_t2 = np.random.randint(0, T - min_frames_needed + 1)
+            start_t2 = snap_to_chunk_size(start_t2, optimal_chunk_size_t)
 
     clip = root[video_name][start_t:start_t + min_frames_needed:step, channel_indices,
                             start_h:start_h + clip_size, start_w:start_w + clip_size]
 
+    if downstream:
+        clip_same_loc_t2 = root[video_name][start_t2:start_t2 + min_frames_needed:step, channel_indices,
+                                            start_h:start_h + clip_size, start_w:start_w + clip_size]
+        clip_diff_loc_t2 = root[video_name][start_t2:start_t2 + min_frames_needed:step, channel_indices,
+                                            start_h2:start_h2 + clip_size, start_w2:start_w2 + clip_size]
+
     if downsample_2x:
         clip = downsample_video_2x(clip)
+        if downstream:
+            clip_same_loc_t2 = downsample_video_2x(clip_same_loc_t2)
+            clip_diff_loc_t2 = downsample_video_2x(clip_diff_loc_t2)
 
-    return clip, channel_inds
+    if not downstream:
+        return clip, channel_inds
+    else:
+        return {
+            "clip": clip,
+            "channel_inds": channel_inds,
+            "clip_same_loc_t2": clip_same_loc_t2,
+            "clip_diff_loc_t2": clip_diff_loc_t2,
+            "t1": start_t,
+            "t2": start_t2,
+        }
 
 
 class TransformPipeline:
@@ -204,6 +248,75 @@ class ZarrVideoDataset():
         metadata = self.root[video_name].attrs["Metadata"]
 
         return video, channel_inds, metadata
+
+    def get_all_metadata(self):
+        all_metadata = []
+        for video_name in self.video_names:
+            metadata = self.root[video_name].attrs["Metadata"]
+            all_metadata.append(metadata)
+        return all_metadata
+
+
+class ZarrVideoDownstreamDataset():
+    def __init__(
+        self,
+        root,
+        video_names,
+        clip_frames,
+        clip_size,
+        acq_freq,
+        channel_names_list,
+        transform_pipeline,
+    ):
+        self.root = root
+        self.video_names = video_names
+        self.clip_frames = clip_frames
+        self.clip_size = clip_size
+        self.acq_freq = acq_freq
+        self.channel_names_list = channel_names_list
+        self.transform_pipeline = transform_pipeline
+
+    def __len__(self):
+        return len(self.video_names)
+
+    def __getitem__(self, idx):
+        video_name = self.video_names[idx]
+        out = get_clip(
+            self.root,
+            video_name,
+            self.clip_frames,
+            self.clip_size,
+            self.acq_freq,
+            self.channel_names_list,
+            random_crop=True,
+            downstream=True
+        )
+
+        clip = out["clip"]
+        clip_same_loc_t2 = out["clip_same_loc_t2"]
+        clip_diff_loc_t2 = out["clip_diff_loc_t2"]
+        t1 = out["t1"]
+        t2 = out["t2"]
+        channel_inds = out["channel_inds"]
+
+        clip = clip.astype("float32")
+        clip_same_loc_t2 = clip_same_loc_t2.astype("float32")
+        clip_diff_loc_t2 = clip_diff_loc_t2.astype("float32")
+        clip = self.transform_pipeline(clip)
+        clip_same_loc_t2 = self.transform_pipeline(clip_same_loc_t2)
+        clip_diff_loc_t2 = self.transform_pipeline(clip_diff_loc_t2)
+
+        metadata = self.root[video_name].attrs["Metadata"]
+
+        return {
+            "clip": clip,
+            "clip_same_loc_t2": clip_same_loc_t2,
+            "clip_diff_loc_t2": clip_diff_loc_t2,
+            "t1": t1,
+            "t2": t2,
+            "channel_inds": channel_inds,
+            "metadata": metadata
+        }
 
     def get_all_metadata(self):
         all_metadata = []
@@ -326,31 +439,22 @@ def create_train_val_datasets(
         random_crop=random_crop_val,
     )
 
-    downstream_train_dataset = ZarrVideoDataset(
-        root=val_root,
-        video_names=downstream_train_video_names,
-        clip_frames=DOWNSTREAM_EVAL_FRAMES,
-        clip_size=clip_size,
-        acq_freq=acq_freq,
-        channel_names_list=channel_names_list,
-        transform_pipeline=transform_pipeline,
-        augment=augment_train,
-        random_crop=random_crop_train,
-    )
+    downstream_datasets = {}
 
-    downstream_test_dataset = ZarrVideoDataset(
-        root=val_root,
-        video_names=downstream_test_video_names,
-        clip_frames=DOWNSTREAM_EVAL_FRAMES,
-        clip_size=clip_size,
-        acq_freq=acq_freq,
-        channel_names_list=channel_names_list,
-        transform_pipeline=transform_pipeline,
-        augment=augment_val,
-        random_crop=random_crop_val,
-    )
+    for split_name, video_names in [("train", downstream_train_video_names), ("test", downstream_test_video_names)]:
+        for frames in [1, 2, 4, 8, 16]:
+            dataset_key = f"{split_name}_{frames}frames"
+            downstream_datasets[dataset_key] = ZarrVideoDownstreamDataset(
+                root=val_root,
+                video_names=video_names,
+                clip_frames=frames,
+                clip_size=clip_size,
+                acq_freq=acq_freq,
+                channel_names_list=channel_names_list,
+                transform_pipeline=transform_pipeline,
+            )
 
-    return train_dataset, val_dataset, downstream_train_dataset, downstream_test_dataset
+    return train_dataset, val_dataset, downstream_datasets
 
 
 def batch_iterator(
@@ -389,13 +493,34 @@ def batch_iterator(
                 samples = [queue.get() for _ in range(n)]
                 remaining -= n
 
-                clips, channel_inds, metadata = zip(*samples)
+                if isinstance(samples[0], dict):
+                    clips = [sample["clip"] for sample in samples]
+                    channel_inds = [sample["channel_inds"] for sample in samples]
+                    metadata = [sample["metadata"] for sample in samples]
+                    clips_same_loc_t2 = [sample["clip_same_loc_t2"] for sample in samples]
+                    clips_diff_loc_t2 = [sample["clip_diff_loc_t2"] for sample in samples]
+                    t1s = [sample["t1"] for sample in samples]
+                    t2s = [sample["t2"] for sample in samples]
 
-                yield (
-                    np.stack(clips),
-                    np.stack(channel_inds),
-                    list(metadata),
-                )
+                    batch = {
+                        "clips": np.stack(clips),
+                        "clips_same_loc_t2": np.stack(clips_same_loc_t2),
+                        "clips_diff_loc_t2": np.stack(clips_diff_loc_t2),
+                        "channel_inds": np.stack(channel_inds),
+                        "t1s": np.array(t1s),
+                        "t2s": np.array(t2s),
+                        "metadata": list(metadata),    
+                    }
+                    
+                    yield batch
+                else:
+                    clips, channel_inds, metadata = zip(*samples)
+
+                    yield (
+                        np.stack(clips),
+                        np.stack(channel_inds),
+                        list(metadata),
+                    )
 
             # Propagate worker exceptions
             for f in futures:
