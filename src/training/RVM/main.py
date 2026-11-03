@@ -10,6 +10,7 @@ import random
 import os
 import wandb
 import json
+import pandas as pd
 
 from utils.model import get_rvm, get_optimizer, BaselinePatcher
 from utils.logging import get_exp_name, setup_wandb
@@ -81,6 +82,7 @@ flags.DEFINE_float(
     "tgt_masking_ratio", 0.95, "Ratio of target tokens to mask during training."
 )
 flags.DEFINE_string("rvm_variant", "S", "Variant of the RVM to use.")
+flags.DEFINE_boolean("var_scaled_loss", False, "Whether to use variance-scaled loss for training.")
 
 flags.DEFINE_string(
     "transforms",
@@ -101,6 +103,7 @@ flags.DEFINE_boolean(
 flags.DEFINE_string(
     "checkpoint_path", None, "Path to a checkpoint to load model parameters from."
 )
+flags.DEFINE_boolean("eval_only", False, "Whether to only run evaluation without training.")
 
 flags.DEFINE_boolean("baseline_model", False, "Whether to use a naive baseline model.")
 
@@ -236,10 +239,11 @@ def main(_):
         FLAGS.max_offset,
         FLAGS.batch_size,
         FLAGS.eval_steps,
+        FLAGS.var_scaled_loss,
         eval_key,
     )
     downstream_eval_key, rng_key = jax.random.split(rng_key)
-    downstream_metrics = downstream_evaluation(
+    downstream_metrics, results_csv = downstream_evaluation(
         foundation_model=model,
         foundation_model_params=params,
         downstream_datasets=downstream_datasets,
@@ -250,11 +254,19 @@ def main(_):
         base_lr=FLAGS.learning_rate,
         grad_accumulation_steps=FLAGS.grad_accumulation_steps,
         main_training_step=step,
+        full_eval=True if FLAGS.eval_only else False,
         rng_key=downstream_eval_key,
     )
     init_metrics.update(downstream_metrics)
     init_metrics.update({"fd_step": step})
     wandb.log(init_metrics)
+
+    if FLAGS.eval_only:
+        results_csv_path = os.path.join(FLAGS.save_dir, "downstream_results.csv")
+        df = pd.DataFrame(results_csv)
+        df.to_csv(results_csv_path, index=False)
+        return
+
     step += 1
 
     checkpointer = ocp.Checkpointer(ocp.PyTreeCheckpointHandler())
@@ -267,6 +279,7 @@ def main(_):
         targets,
         channel_inds,
         target_deltas,
+        var_scaled_loss,
         rng_key,
     ):
         return update_model(
@@ -278,6 +291,7 @@ def main(_):
             targets,
             channel_inds,
             target_deltas,
+            var_scaled_loss,
             rng_key,
         )
 
@@ -305,6 +319,7 @@ def main(_):
                 tgt,
                 channel_inds,
                 offsets,
+                FLAGS.var_scaled_loss,
                 train_key,
             )
             metrics.update(train_metrics)
@@ -317,6 +332,7 @@ def main(_):
                     tgt,
                     channel_inds,
                     offsets,
+                    FLAGS.var_scaled_loss,
                     train_key,
                 ).compile()
                 cost = compiled.cost_analysis()
@@ -341,6 +357,7 @@ def main(_):
                     FLAGS.max_offset,
                     FLAGS.batch_size,
                     FLAGS.eval_steps,
+                    FLAGS.var_scaled_loss,
                     eval_key,
                 )
                 metrics.update(eval_metrics)

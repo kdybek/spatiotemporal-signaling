@@ -12,9 +12,11 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import StratifiedKFold, cross_val_score
 import matplotlib.pyplot as plt
 import re
+from collections import defaultdict
 
 from utils.dataloader import batch_iterator, prepare_rvm_src_tgt_pairs
 from utils.model import get_optimizer, AttentionPoolingClassifier, AttentionPoolingOrderClassifier
+from utils.loss import reconstruction_metrics
 
 EVAL_SUBFOLDER = "evaluation"
 DOWNSTREAM_SUBFOLDER = "downstream"
@@ -201,12 +203,15 @@ def evaluate_probing(features, labels, cv=5):
     }
 
 
-def evaluate_loss(reconstructed, targets, masks):
-    error = (reconstructed - targets) ** 2
-    mse_loss = np.sum(masks * error) / (np.sum(masks) + 1e-8)
+def evaluate_reconstruction(reconstructed, targets, masks, var_scaled_loss):
+    mse_loss, spearman_corr, pearson_corr = reconstruction_metrics(
+        reconstructed, targets, masks, var_scaled_loss
+    )
 
     return {
         f"{EVAL_SUBFOLDER}/loss": mse_loss,
+        f"{EVAL_SUBFOLDER}/spearman_correlation": spearman_corr,
+        f"{EVAL_SUBFOLDER}/pearson_correlation": pearson_corr,
     }
 
 
@@ -222,6 +227,7 @@ def partial_evaluation(
     max_offset,
     batch_size,
     eval_steps,
+    var_scaled_loss,
     rng_key,
 ):
     outputs = compute_outputs(
@@ -245,7 +251,7 @@ def partial_evaluation(
 
     metrics = {}
     metrics.update(
-        evaluate_loss(reconstructed=reconstructed, targets=targets, masks=masks)
+        evaluate_reconstruction(reconstructed=reconstructed, targets=targets, masks=masks, var_scaled_loss=var_scaled_loss)
     )
     metrics.update(
         visualize_reconstructions(
@@ -319,6 +325,11 @@ def get_labels(metadata, target, class_to_index, t1, t2):
     return np.array(labels)
 
 
+def entropy(p, axis=-1, eps=1e-12):
+    p = jnp.clip(p, eps, 1.0)
+    return -jnp.sum(p * jnp.log(p), axis=axis)
+
+
 def downstream_evaluation(
     foundation_model,
     foundation_model_params,
@@ -330,24 +341,42 @@ def downstream_evaluation(
     base_lr,
     grad_accumulation_steps,
     main_training_step,
+    full_eval,
     rng_key,
 ):
-    metrics = downstream_evaluation_(
-        foundation_model,
-        foundation_model_params,
-        downstream_datasets["train_4frames"],
-        downstream_datasets["test_4frames"],
-        downstream_train_steps,
-        downstream_eval_interval,
-        downstream_eval_steps,
-        batch_size,
-        base_lr,
-        grad_accumulation_steps,
-        main_training_step,
-        rng_key,
-    )
+    if not full_eval:
+        NUM_FRAMES = [4]
+    else:
+        NUM_FRAMES = [1, 2, 4, 8]
 
-    return metrics
+    metrics = {}
+    results_csv = []
+    for num_frames in NUM_FRAMES:
+        if f"train_{num_frames}frames" not in downstream_datasets:
+            raise ValueError(f"Missing train dataset for {num_frames} frames.")
+        if f"test_{num_frames}frames" not in downstream_datasets:
+            raise ValueError(f"Missing test dataset for {num_frames} frames.")
+
+        m, r = downstream_evaluation_(
+            foundation_model,
+            foundation_model_params,
+            downstream_datasets[f"train_{num_frames}frames"],
+            downstream_datasets[f"test_{num_frames}frames"],
+            downstream_train_steps,
+            downstream_eval_interval,
+            downstream_eval_steps,
+            batch_size,
+            base_lr,
+            grad_accumulation_steps,
+            main_training_step,
+            full_eval,
+            rng_key,
+        )
+        metrics.update(m)
+        r = [row.update({"num_frames": num_frames}) for row in r]
+        results_csv.extend(r)
+
+    return metrics, results_csv
 
 
 def downstream_evaluation_(
@@ -362,17 +391,25 @@ def downstream_evaluation_(
     base_lr,
     grad_accumulation_steps,
     main_training_step,
+    full_eval,
     rng_key,
 ):
-    TARGETS = ["cell_type", "treatment", "cell_type_treatment", "order_same_loc", "order_diff_loc"]
+    if not full_eval:
+        TARGETS = ["cell_type", "treatment", "order_diff_loc"]
+        FEATURE_EXTRACTION = ["all"]
+    else:
+        TARGETS = ["cell_type", "treatment", "cell_type_treatment", "order_same_loc", "order_diff_loc"]
+        FEATURE_EXTRACTION = ["all", "rand", "1ch"]
 
-    downstream_models_dict = {}
-    downstream_params_dict = {}
-    optimizers_dict = {}
-    opt_states_dict = {}
-    class_to_index_dict = {}
-    num_classes_dict = {}
-    for target in TARGETS:
+    TASKS = [(target, feat) for target in TARGETS for feat in FEATURE_EXTRACTION]
+
+    downstream_models_dict = defaultdict(dict)
+    downstream_params_dict = defaultdict(dict)
+    optimizers_dict = defaultdict(dict)
+    opt_states_dict = defaultdict(dict)
+    class_to_index_dict = defaultdict(dict)
+    num_classes_dict = defaultdict(dict)
+    for target, feat in TASKS:
         classes_train = find_classes(downstream_train_dataset, target)
         classes_test = find_classes(downstream_test_dataset, target)
 
@@ -404,28 +441,68 @@ def downstream_evaluation_(
         )
         opt_state = optimizer.init(params)
 
-        downstream_models_dict[target] = downstream_model
-        downstream_params_dict[target] = params
-        optimizers_dict[target] = optimizer
-        opt_states_dict[target] = opt_state
-        class_to_index_dict[target] = class_to_index
-        num_classes_dict[target] = num_classes
+        downstream_models_dict[target][feat] = downstream_model
+        downstream_params_dict[target][feat] = params
+        optimizers_dict[target][feat] = optimizer
+        opt_states_dict[target][feat] = opt_state
+        class_to_index_dict[target][feat] = class_to_index
+        num_classes_dict[target][feat] = num_classes
 
     @jax.jit
     def extract_features(src_frames, channel_inds, rng_key):
+        model_key1, model_key2, token_sample_key, channel_sample_key = jax.random.split(rng_key, 4)
         features = foundation_model.apply(
             {"params": foundation_model_params}, 
             src_frames, 
             channel_inds, 
             method=foundation_model.encode,
-            rngs={"default": rng_key}
+            rngs={"default": model_key1}
         )
-        features = features.reshape(features.shape[0], -1, features.shape[-1])
-        return features
+        features_all = features.reshape(features.shape[0], -1, features.shape[-1])
+        B, N, D = features_all.shape
+        rand_inds_token = jax.random.choice(token_sample_key, N, shape=(B,), replace=True)
+        features_rand = features_all[jnp.arange(B), rand_inds_token, :]
+        features_rand = features_rand.reshape(B, 1, D)
 
-    def make_training_step(target):
-        downstream_model = downstream_models_dict[target]
-        optimizer = optimizers_dict[target]
+        rand_inds_ch = jax.random.choice(channel_sample_key, channel_inds.shape[-1], shape=(B,), replace=True)
+        channel_inds_1ch = channel_inds[jnp.arange(B), rand_inds_ch]
+        channel_inds_1ch = channel_inds_1ch.reshape(B, 1)
+        features_1ch = foundation_model.apply(
+            {"params": foundation_model_params}, 
+            src_frames, 
+            channel_inds_1ch, 
+            method=foundation_model.encode,
+            rngs={"default": model_key2}
+        )
+        features_1ch = features_1ch.reshape(features_1ch.shape[0], -1, features_1ch.shape[-1])
+
+        return {
+            "all": features_all,
+            "rand": features_rand,
+            "1ch": features_1ch,
+        }
+
+    def extract_features_from_batch(batch, rng_key):
+        clips = batch["clips"]
+        clips_same_loc_t2 = batch["clips_same_loc_t2"]
+        clips_diff_loc_t2 = batch["clips_diff_loc_t2"]
+        channel_inds = batch["channel_inds"]
+
+        clips = np.transpose(clips, (0, 1, 3, 4, 2))
+        clips_same_loc_t2 = np.transpose(clips_same_loc_t2, (0, 1, 3, 4, 2))
+        clips_diff_loc_t2 = np.transpose(clips_diff_loc_t2, (0, 1, 3, 4, 2))
+
+        rng_key1, rng_key2, rng_key3 = jax.random.split(rng_key, 3)
+        features_dict = {}
+        features_dict["clips"] = extract_features(clips, channel_inds, rng_key1)
+        features_dict["clips_same_loc_t2"] = extract_features(clips_same_loc_t2, channel_inds, rng_key2)
+        features_dict["clips_diff_loc_t2"] = extract_features(clips_diff_loc_t2, channel_inds, rng_key3)
+
+        return features_dict
+    
+    def make_training_step(target, feat):
+        downstream_model = downstream_models_dict[target][feat]
+        optimizer = optimizers_dict[target][feat]
 
         @jax.jit
         def training_step(
@@ -473,8 +550,8 @@ def downstream_evaluation_(
 
         return training_step
 
-    def make_predict(target):
-        downstream_model = downstream_models_dict[target]
+    def make_predict(target, feat):
+        downstream_model = downstream_models_dict[target][feat]
 
         @jax.jit
         def predict(
@@ -485,20 +562,28 @@ def downstream_evaluation_(
         ):
             if target not in ["order_same_loc", "order_diff_loc"]:
                 output = downstream_model.apply({"params": params}, features)
+                attention_weights = output["attention_weights"]
+                attention_entropy = entropy(attention_weights, axis=-1)
             elif target == "order_same_loc":
                 output = downstream_model.apply({"params": params}, features, features_same_loc_t2)
+                attention_weights1 = output["attention_weights1"]
+                attention_weights2 = output["attention_weights2"]
+                attention_entropy = (entropy(attention_weights1, axis=-1) + entropy(attention_weights2, axis=-1)) / 2
             elif target == "order_diff_loc":
                 output = downstream_model.apply({"params": params}, features, features_diff_loc_t2)
+                attention_weights1 = output["attention_weights1"]
+                attention_weights2 = output["attention_weights2"]
+                attention_entropy = (entropy(attention_weights1, axis=-1) + entropy(attention_weights2, axis=-1)) / 2
 
-            return output["logits"]
+            return output["logits"], attention_entropy
 
         return predict
     
     training_funcs = {}
     predict_funcs = {}
-    for target in TARGETS:
-        training_funcs[target] = make_training_step(target)
-        predict_funcs[target] = make_predict(target)
+    for target, feat in TASKS:
+        training_funcs[target][feat] = make_training_step(target, feat)
+        predict_funcs[target][feat] = make_predict(target, feat)
 
         wandb.define_metric(
             f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_train_loss", 
@@ -514,76 +599,81 @@ def downstream_evaluation_(
         )
 
     def eval(rng_key, train_step):
-        all_predictions = {}
-        all_logits = {}
-        all_labels = {}
+        all_predictions = defaultdict(dict)
+        all_logits = defaultdict(dict)
+        all_labels = defaultdict(dict)
+        all_attention_entropy = defaultdict(dict)
 
-        for target in TARGETS:
-            all_predictions[target] = []
-            all_logits[target] = []
-            all_labels[target] = []
+        for target, feat in TASKS:
+            all_predictions[target][feat] = []
+            all_logits[target][feat] = []
+            all_labels[target][feat] = []
+            all_attention_entropy[target][feat] = []
 
         eval_step = 1
         while eval_step <= downstream_eval_steps:
             loader = batch_iterator(downstream_test_dataset, batch_size=batch_size)
-            for out in tqdm(loader, desc="Downstream testing"):
-                clips = out["clips"]
-                clips_same_loc_t2 = out["clips_same_loc_t2"]
-                clips_diff_loc_t2 = out["clips_diff_loc_t2"]
-                channel_inds = out["channel_inds"]
-                metadata = out["metadata"]
-                t1 = out["t1"]
-                t2 = out["t2"]
+            for batch in tqdm(loader, desc="Downstream testing"):
+                metadata = batch["metadata"]
+                t1 = batch["t1"]
+                t2 = batch["t2"]
 
-                clips = np.transpose(clips, (0, 1, 3, 4, 2))
-                clips_same_loc_t2 = np.transpose(clips_same_loc_t2, (0, 1, 3, 4, 2))
-                clips_diff_loc_t2 = np.transpose(clips_diff_loc_t2, (0, 1, 3, 4, 2))
+                extract_key, rng_key = jax.random.split(rng_key)
+                features_dict = extract_features_from_batch(batch, extract_key)
 
-                rng_key1, rng_key2, rng_key3, rng_key = jax.random.split(rng_key, 4)
-                features = extract_features(clips, channel_inds, rng_key1)
-                features_same_loc_t2 = extract_features(clips_same_loc_t2, channel_inds, rng_key2)
-                features_diff_loc_t2 = extract_features(clips_diff_loc_t2, channel_inds, rng_key3)
+                for target, feat in TASKS:
+                    predict = predict_funcs[target][feat]
+                    params = downstream_params_dict[target][feat]
 
-                for target in TARGETS:
-                    predict = predict_funcs[target]
-                    params = downstream_params_dict[target]
-
-                    logits = predict(
+                    logits, attention_entropy = predict(
                         params,
-                        features,
-                        features_same_loc_t2,
-                        features_diff_loc_t2,
+                        features_dict["clips"][feat],
+                        features_dict["clips_same_loc_t2"][feat],
+                        features_dict["clips_diff_loc_t2"][feat],
                     )
 
-                    labels = get_labels(metadata, target, class_to_index_dict[target], t1, t2)
+                    labels = get_labels(metadata, target, class_to_index_dict[target][feat], t1, t2)
 
                     predictions = jnp.argmax(logits, axis=-1)
-                    all_predictions[target].extend(np.array(predictions))
-                    all_logits[target].extend(np.array(logits))
-                    all_labels[target].extend(labels)
-
+                    all_predictions[target][feat].extend(np.array(predictions))
+                    all_logits[target][feat].extend(np.array(logits))
+                    all_labels[target][feat].extend(labels)
+                    all_attention_entropy[target][feat].extend(np.array(attention_entropy))
                 eval_step += 1
                 if eval_step > downstream_eval_steps:
                     break
 
         metrics = {}
-        for target in TARGETS:
-            all_predictions[target] = np.array(all_predictions[target])
-            all_logits[target] = np.array(all_logits[target])
-            all_labels[target] = np.array(all_labels[target])
-
-            accuracy = np.mean(all_predictions[target] == all_labels[target])
-            loss = optax.softmax_cross_entropy_with_integer_labels(all_logits[target], all_labels[target]).mean()
+        results_csv = []
+        for target, feat in TASKS:
+            all_predictions[target][feat] = np.array(all_predictions[target][feat])
+            all_logits[target][feat] = np.array(all_logits[target][feat])
+            all_labels[target][feat] = np.array(all_labels[target][feat])
+            all_attention_entropy[target][feat] = np.array(all_attention_entropy[target][feat])
+            accuracy = np.mean(all_predictions[target][feat] == all_labels[target][feat])
+            loss = optax.softmax_cross_entropy_with_integer_labels(all_logits[target][feat], all_labels[target][feat]).mean()
+            attention_entropy_mean = np.mean(all_attention_entropy[target][feat])
 
             wandb.log({
-                f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_test_loss": loss,
-                f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_test_accuracy": accuracy,
-                f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_step": train_step
+                f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_feat_{feat}_fd_step_{main_training_step}_test_loss": loss,
+                f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_feat_{feat}_fd_step_{main_training_step}_test_accuracy": accuracy,
+                f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_feat_{feat}_fd_step_{main_training_step}_attention_entropy": attention_entropy_mean,
+                f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_feat_{feat}_fd_step_{main_training_step}_step": train_step
             })
 
-            metrics[f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_test_accuracy"] = accuracy
+            metrics[f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_feat_{feat}_fd_step_{main_training_step}_test_accuracy"] = accuracy
+            metrics[f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_feat_{feat}_fd_step_{main_training_step}_attention_entropy"] = attention_entropy_mean
 
-        return metrics
+            results_csv.append({
+                "target": target,
+                "feature": feat,
+                "accuracy": accuracy,
+                "loss": loss,
+                "attention_entropy": attention_entropy_mean,
+                "train_step": train_step,
+            })
+
+        return metrics, results_csv
 
     eval_key, rng_key = jax.random.split(rng_key)
     metrics = eval(eval_key, train_step=0)
@@ -591,53 +681,43 @@ def downstream_evaluation_(
     train_step = 1
     while train_step <= downstream_train_steps:
         loader = batch_iterator(downstream_train_dataset, batch_size=batch_size)
-        for out in tqdm(loader, desc=f"Downstream training"):
-            clips = out["clips"]
-            clips_same_loc_t2 = out["clips_same_loc_t2"]
-            clips_diff_loc_t2 = out["clips_diff_loc_t2"]
-            channel_inds = out["channel_inds"]
-            metadata = out["metadata"]
-            t1 = out["t1"]
-            t2 = out["t2"]
+        for batch in tqdm(loader, desc=f"Downstream training"):
+            metadata = batch["metadata"]
+            t1 = batch["t1"]
+            t2 = batch["t2"]
 
-            clips = np.transpose(clips, (0, 1, 3, 4, 2))
-            clips_same_loc_t2 = np.transpose(clips_same_loc_t2, (0, 1, 3, 4, 2))
-            clips_diff_loc_t2 = np.transpose(clips_diff_loc_t2, (0, 1, 3, 4, 2))
+            extract_key, rng_key = jax.random.split(rng_key)
+            features_dict = extract_features_from_batch(batch, extract_key)
 
-            rng_key1, rng_key2, rng_key3, rng_key = jax.random.split(rng_key, 4)
-            features = extract_features(clips, channel_inds, rng_key1)
-            features_same_loc_t2 = extract_features(clips_same_loc_t2, channel_inds, rng_key2)
-            features_diff_loc_t2 = extract_features(clips_diff_loc_t2, channel_inds, rng_key3)
+            for target, feat in TASKS:
+                training_step = training_funcs[target][feat]
+                params = downstream_params_dict[target][feat]
+                opt_state = opt_states_dict[target][feat]
 
-            for target in TARGETS:
-                training_step = training_funcs[target]
-                params = downstream_params_dict[target]
-                opt_state = opt_states_dict[target]
-
-                labels = get_labels(metadata, target, class_to_index_dict[target], t1, t2)
+                labels = get_labels(metadata, target, class_to_index_dict[target][feat], t1, t2)
                 params, opt_state, loss = training_step(
                     params,
                     opt_state,
-                    features,
-                    features_same_loc_t2,
-                    features_diff_loc_t2,
+                    features_dict["clips"][feat],
+                    features_dict["clips_same_loc_t2"][feat],
+                    features_dict["clips_diff_loc_t2"][feat],
                     labels,
                 )
 
-                downstream_params_dict[target] = params
-                opt_states_dict[target] = opt_state
+                downstream_params_dict[target][feat] = params
+                opt_states_dict[target][feat] = opt_state
 
                 wandb.log({
-                    f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_train_loss": loss,
-                    f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_step": train_step
+                    f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_feat_{feat}_fd_step_{main_training_step}_train_loss": loss,
+                    f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_feat_{feat}_fd_step_{main_training_step}_step": train_step
                 })
 
             if train_step % downstream_eval_interval == 0:
                 eval_key, rng_key = jax.random.split(rng_key)
-                metrics = eval(eval_key, train_step)  # Override metrics with the latest evaluation results
+                metrics, results_csv = eval(eval_key, train_step)  # Override metrics with the latest evaluation results
 
             train_step += 1
             if train_step > downstream_train_steps:
                 break
 
-    return metrics
+    return metrics, results_csv
