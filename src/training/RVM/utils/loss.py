@@ -91,14 +91,22 @@ def masked_correlation(x, y, mask, axis, eps=1e-8):
     return jnp.mean(corr)
 
 
-def prepare_model_output
-
-
 def reconstruction_metrics(reconstructed, targets, mask, var_scaled_loss):
     error = (reconstructed - targets) ** 2
+
+    per_sample_loss = (
+        jnp.sum(mask * error, axis=(2, 3))
+        / (jnp.sum(mask, axis=(2, 3)) + 1e-8)
+    )
+
     if var_scaled_loss:
-        error = error / (jnp.var(targets, axis=(2, 3), keepdims=True) + 1e-8)
-    mse_loss = jnp.sum(mask * error) / (jnp.sum(mask) + 1e-8)
+        var = jnp.var(targets, axis=(2, 3))
+        weights = 1.0 / (var + 1e-8)
+        weights = weights / jnp.mean(weights)
+
+        mse_loss = jnp.mean(weights * per_sample_loss)
+    else:
+        mse_loss = jnp.mean(per_sample_loss)
 
     # Compute correlations
     targets_flat = targets.reshape(targets.shape[0], targets.shape[1], -1, targets.shape[-1])
