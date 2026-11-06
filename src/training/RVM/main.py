@@ -191,6 +191,7 @@ def main(_):
             base_lr=FLAGS.learning_rate,
             grad_accumulation_steps=FLAGS.grad_accumulation_steps,
             main_training_step=0,
+            full_eval=True,
             rng_key=eval_key,
         )
         return  # Exit after evaluating the baseline model
@@ -217,6 +218,8 @@ def main(_):
 
     wandb.define_metric("fd_step")
     wandb.define_metric("*", step_metric="fd_step")
+
+    checkpointer = ocp.Checkpointer(ocp.PyTreeCheckpointHandler())
 
     if FLAGS.checkpoint_path is not None:
         params, opt_state, step = load_checkpoint(checkpointer, FLAGS.checkpoint_path)
@@ -268,8 +271,6 @@ def main(_):
         return
 
     step += 1
-
-    checkpointer = ocp.Checkpointer(ocp.PyTreeCheckpointHandler())
 
     @jax.jit
     def training_step(
