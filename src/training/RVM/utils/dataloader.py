@@ -328,11 +328,12 @@ class ZarrVideoDownstreamDataset():
 
 # Usefull for debugging
 class DummyDataset():
-    def __init__(self, clip_frames, clip_size, acq_freq, channel_names_list):
+    def __init__(self, clip_frames, clip_size, acq_freq, channel_names_list, downstream):
         self.clip_frames = clip_frames
         self.clip_size = clip_size
         self.acq_freq = acq_freq
         self.channel_names_list = channel_names_list
+        self.downstream = downstream
 
     def __len__(self):
         return 8  # Arbitrary length for the dummy dataset
@@ -344,12 +345,47 @@ class DummyDataset():
         channel_inds = np.arange(len(self.channel_names_list) - 1)  # Dummy channel indices
         metadata = {"Cell_type": f"{idx%3}", "Inhibitor": f"{idx%4}"}  # Dummy metadata
 
-        return video, channel_inds, metadata
+        if self.downstream:
+            # Generate dummy clips for downstream evaluation
+            clip_same_loc_t2 = np.random.rand(self.clip_frames, len(self.channel_names_list), self.clip_size, self.clip_size).astype("float32")
+            clip_diff_loc_t2 = np.random.rand(self.clip_frames, len(self.channel_names_list), self.clip_size, self.clip_size).astype("float32")
+            t1 = np.random.randint(0, 100)  # Dummy time index for t1
+            t2 = np.random.randint(0, 100)  # Dummy time index for t2
+
+            return {
+                "clip": video,
+                "clip_same_loc_t2": clip_same_loc_t2,
+                "clip_diff_loc_t2": clip_diff_loc_t2,
+                "t1": t1,
+                "t2": t2,
+                "channel_inds": channel_inds,
+                "metadata": metadata
+            }
+        else:
+            return video, channel_inds, metadata
 
     def get_all_metadata(self):
         return [
             {"Cell_type": f"{i%3}", "Inhibitor": f"{i%4}"} for i in range(len(self))
         ]  # Dummy metadata for all items
+
+
+def create_train_val_dummy_datasets(
+    clip_frames,
+    clip_size,
+    acq_freq,
+    channel_names_list,
+):
+    downstream_dict = {}
+    for frames in [1, 2, 4, 8, 16]:
+        downstream_dict[f"train_{frames}frames"] = DummyDataset(frames, clip_size, acq_freq, channel_names_list, downstream=True)
+        downstream_dict[f"test_{frames}frames"] = DummyDataset(frames, clip_size, acq_freq, channel_names_list, downstream=True)
+
+    return (
+        DummyDataset(clip_frames, clip_size, acq_freq, channel_names_list, downstream=False), 
+        DummyDataset(clip_frames, clip_size, acq_freq, channel_names_list, downstream=False),
+        downstream_dict
+    )
 
 
 def create_train_val_datasets(
@@ -366,14 +402,14 @@ def create_train_val_datasets(
     random_crop_val=True,
 ):
     '''
-    return (
-        DummyDataset(clip_frames, clip_size, acq_freq, channel_names_list), 
-        DummyDataset(clip_frames, clip_size, acq_freq, channel_names_list),
-        DummyDataset(DOWNSTREAM_EVAL_FRAMES, clip_size, acq_freq, channel_names_list),
-        DummyDataset(DOWNSTREAM_EVAL_FRAMES, clip_size, acq_freq, channel_names_list)
+    return create_train_val_dummy_datasets(
+        clip_frames=clip_frames,
+        clip_size=clip_size,
+        acq_freq=acq_freq,
+        channel_names_list=channel_names_list,
     )
     '''
-    
+
     root = zarr.open(zarr_path, mode="r")
     train_root = root["train"]
     val_root = root["val"]
@@ -503,16 +539,16 @@ def batch_iterator(
                     t2s = [sample["t2"] for sample in samples]
 
                     batch = {
-                        "clips": np.stack(clips),
-                        "clips_same_loc_t2": np.stack(clips_same_loc_t2),
-                        "clips_diff_loc_t2": np.stack(clips_diff_loc_t2),
+                        "clip": np.stack(clips),
+                        "clip_same_loc_t2": np.stack(clips_same_loc_t2),
+                        "clip_diff_loc_t2": np.stack(clips_diff_loc_t2),
                         "channel_inds": np.stack(channel_inds),
-                        "t1s": np.array(t1s),
-                        "t2s": np.array(t2s),
+                        "t1": np.array(t1s),
+                        "t2": np.array(t2s),
                         "metadata": list(metadata),    
                     }
-                    
                     yield batch
+
                 else:
                     clips, channel_inds, metadata = zip(*samples)
 

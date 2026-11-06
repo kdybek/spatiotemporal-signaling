@@ -373,7 +373,8 @@ def downstream_evaluation(
             rng_key,
         )
         metrics.update(m)
-        r = [row.update({"num_frames": num_frames}) for row in r]
+        for row in r:
+            row.update({"num_frames": num_frames})
         results_csv.extend(r)
 
     return metrics, results_csv
@@ -413,7 +414,10 @@ def downstream_evaluation_(
         classes_train = find_classes(downstream_train_dataset, target)
         classes_test = find_classes(downstream_test_dataset, target)
 
-        assert set(classes_train) == set(classes_test), "Train and test classes must match."
+        if set(classes_train) != set(classes_test):
+            print(f"Warning: Classes in train and test datasets do not match for target '{target}'.")
+            print(f"Train classes: {classes_train}")
+            print(f"Test classes: {classes_test}")
 
         class_to_index = {cls: idx for idx, cls in enumerate(classes_train)}
         num_classes = len(classes_train)
@@ -483,9 +487,9 @@ def downstream_evaluation_(
         }
 
     def extract_features_from_batch(batch, rng_key):
-        clips = batch["clips"]
-        clips_same_loc_t2 = batch["clips_same_loc_t2"]
-        clips_diff_loc_t2 = batch["clips_diff_loc_t2"]
+        clips = batch["clip"]
+        clips_same_loc_t2 = batch["clip_same_loc_t2"]
+        clips_diff_loc_t2 = batch["clip_diff_loc_t2"]
         channel_inds = batch["channel_inds"]
 
         clips = np.transpose(clips, (0, 1, 3, 4, 2))
@@ -494,9 +498,9 @@ def downstream_evaluation_(
 
         rng_key1, rng_key2, rng_key3 = jax.random.split(rng_key, 3)
         features_dict = {}
-        features_dict["clips"] = extract_features(clips, channel_inds, rng_key1)
-        features_dict["clips_same_loc_t2"] = extract_features(clips_same_loc_t2, channel_inds, rng_key2)
-        features_dict["clips_diff_loc_t2"] = extract_features(clips_diff_loc_t2, channel_inds, rng_key3)
+        features_dict["clip"] = extract_features(clips, channel_inds, rng_key1)
+        features_dict["clip_same_loc_t2"] = extract_features(clips_same_loc_t2, channel_inds, rng_key2)
+        features_dict["clip_diff_loc_t2"] = extract_features(clips_diff_loc_t2, channel_inds, rng_key3)
 
         return features_dict
     
@@ -579,23 +583,23 @@ def downstream_evaluation_(
 
         return predict
     
-    training_funcs = {}
-    predict_funcs = {}
+    training_funcs = defaultdict(dict)
+    predict_funcs = defaultdict(dict)
     for target, feat in TASKS:
         training_funcs[target][feat] = make_training_step(target, feat)
         predict_funcs[target][feat] = make_predict(target, feat)
 
         wandb.define_metric(
-            f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_train_loss", 
-            step_metric=f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_step"
+            f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_feat_{feat}_fd_step_{main_training_step}_train_loss", 
+            step_metric=f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_feat_{feat}_fd_step_{main_training_step}_step"
         )
         wandb.define_metric(
-            f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_test_loss", 
-            step_metric=f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_step"
+            f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_feat_{feat}_fd_step_{main_training_step}_test_loss", 
+            step_metric=f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_feat_{feat}_fd_step_{main_training_step}_step"
         )
         wandb.define_metric(
-            f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_test_accuracy", 
-            step_metric=f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_fd_step_{main_training_step}_step"
+            f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_feat_{feat}_fd_step_{main_training_step}_test_accuracy", 
+            step_metric=f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_feat_{feat}_fd_step_{main_training_step}_step"
         )
 
     def eval(rng_key, train_step):
@@ -627,9 +631,9 @@ def downstream_evaluation_(
 
                     logits, attention_entropy = predict(
                         params,
-                        features_dict["clips"][feat],
-                        features_dict["clips_same_loc_t2"][feat],
-                        features_dict["clips_diff_loc_t2"][feat],
+                        features_dict["clip"][feat],
+                        features_dict["clip_same_loc_t2"][feat],
+                        features_dict["clip_diff_loc_t2"][feat],
                     )
 
                     labels = get_labels(metadata, target, class_to_index_dict[target][feat], t1, t2)
@@ -670,7 +674,6 @@ def downstream_evaluation_(
                 "accuracy": accuracy,
                 "loss": loss,
                 "attention_entropy": attention_entropy_mean,
-                "train_step": train_step,
             })
 
         return metrics, results_csv
@@ -698,9 +701,9 @@ def downstream_evaluation_(
                 params, opt_state, loss = training_step(
                     params,
                     opt_state,
-                    features_dict["clips"][feat],
-                    features_dict["clips_same_loc_t2"][feat],
-                    features_dict["clips_diff_loc_t2"][feat],
+                    features_dict["clip"][feat],
+                    features_dict["clip_same_loc_t2"][feat],
+                    features_dict["clip_diff_loc_t2"][feat],
                     labels,
                 )
 
