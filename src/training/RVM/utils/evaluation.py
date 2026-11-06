@@ -330,6 +330,11 @@ def entropy(p, axis=-1, eps=1e-12):
     return -jnp.sum(p * jnp.log(p), axis=axis)
 
 
+
+def wandb_dir_name(target, feat, num_frames, main_training_step):
+    return f"{DOWNSTREAM_SUBFOLDER}_tgt_{target}_feat_{feat}_n_frames_{num_frames}_fd_step_{main_training_step}"
+
+
 def downstream_evaluation(
     foundation_model,
     foundation_model_params,
@@ -370,11 +375,10 @@ def downstream_evaluation(
             grad_accumulation_steps,
             main_training_step,
             full_eval,
+            num_frames,
             rng_key,
         )
         metrics.update(m)
-        for row in r:
-            row.update({"num_frames": num_frames})
         results_csv.extend(r)
 
     return metrics, results_csv
@@ -393,6 +397,7 @@ def downstream_evaluation_(
     grad_accumulation_steps,
     main_training_step,
     full_eval,
+    num_frames,
     rng_key,
 ):
     if not full_eval:
@@ -590,16 +595,16 @@ def downstream_evaluation_(
         predict_funcs[target][feat] = make_predict(target, feat)
 
         wandb.define_metric(
-            f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_feat_{feat}_fd_step_{main_training_step}_train_loss", 
-            step_metric=f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_feat_{feat}_fd_step_{main_training_step}_step"
+            f"{wandb_dir_name(target, feat, num_frames, main_training_step)}/train_loss", 
+            step_metric=f"{wandb_dir_name(target, feat, num_frames, main_training_step)}/step"
         )
         wandb.define_metric(
-            f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_feat_{feat}_fd_step_{main_training_step}_test_loss", 
-            step_metric=f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_feat_{feat}_fd_step_{main_training_step}_step"
+            f"{wandb_dir_name(target, feat, num_frames, main_training_step)}/test_loss", 
+            step_metric=f"{wandb_dir_name(target, feat, num_frames, main_training_step)}/step"
         )
         wandb.define_metric(
-            f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_feat_{feat}_fd_step_{main_training_step}_test_accuracy", 
-            step_metric=f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_feat_{feat}_fd_step_{main_training_step}_step"
+            f"{wandb_dir_name(target, feat, num_frames, main_training_step)}/test_accuracy", 
+            step_metric=f"{wandb_dir_name(target, feat, num_frames, main_training_step)}/step"
         )
 
     def eval(rng_key, train_step):
@@ -659,14 +664,15 @@ def downstream_evaluation_(
             attention_entropy_mean = np.mean(all_attention_entropy[target][feat])
 
             wandb.log({
-                f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_feat_{feat}_fd_step_{main_training_step}_test_loss": loss,
-                f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_feat_{feat}_fd_step_{main_training_step}_test_accuracy": accuracy,
-                f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_feat_{feat}_fd_step_{main_training_step}_attention_entropy": attention_entropy_mean,
-                f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_feat_{feat}_fd_step_{main_training_step}_step": train_step
+                f"{wandb_dir_name(target, feat, num_frames, main_training_step)}/test_loss": loss,
+                f"{wandb_dir_name(target, feat, num_frames, main_training_step)}/test_accuracy": accuracy,
+                f"{wandb_dir_name(target, feat, num_frames, main_training_step)}/attention_entropy": attention_entropy_mean,
+                f"{wandb_dir_name(target, feat, num_frames, main_training_step)}/step": train_step
             })
 
-            metrics[f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_feat_{feat}_fd_step_{main_training_step}_test_accuracy"] = accuracy
-            metrics[f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_feat_{feat}_fd_step_{main_training_step}_attention_entropy"] = attention_entropy_mean
+            metrics[f"{wandb_dir_name(target, feat, num_frames, main_training_step)}/test_accuracy"] = accuracy
+            metrics[f"{wandb_dir_name(target, feat, num_frames, main_training_step)}/test_loss"] = loss
+            metrics[f"{wandb_dir_name(target, feat, num_frames, main_training_step)}/attention_entropy"] = attention_entropy_mean
 
             results_csv.append({
                 "target": target,
@@ -674,6 +680,7 @@ def downstream_evaluation_(
                 "accuracy": accuracy,
                 "loss": loss,
                 "attention_entropy": attention_entropy_mean,
+                "num_frames": num_frames,
             })
 
         return metrics, results_csv
@@ -711,8 +718,8 @@ def downstream_evaluation_(
                 opt_states_dict[target][feat] = opt_state
 
                 wandb.log({
-                    f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_feat_{feat}_fd_step_{main_training_step}_train_loss": loss,
-                    f"{DOWNSTREAM_SUBFOLDER}/tgt_{target}_feat_{feat}_fd_step_{main_training_step}_step": train_step
+                    f"{wandb_dir_name(target, feat, num_frames, main_training_step)}/train_loss": loss,
+                    f"{wandb_dir_name(target, feat, num_frames, main_training_step)}/step": train_step
                 })
 
             if train_step % downstream_eval_interval == 0:
