@@ -180,7 +180,7 @@ def main(_):
     if FLAGS.baseline_model:
         baseline_model = BaselinePatcher(patch_size=(16, 16))
         eval_key, rng_key = jax.random.split(rng_key)
-        downstream_metrics = downstream_evaluation(
+        downstream_metrics, results_csv = downstream_evaluation(
             foundation_model=baseline_model,
             foundation_model_params={},
             downstream_datasets=downstream_datasets,
@@ -194,6 +194,11 @@ def main(_):
             full_eval=True,
             rng_key=eval_key,
         )
+
+        results_csv_path = os.path.join(FLAGS.save_dir, "downstream_results.csv")
+        df = pd.DataFrame(results_csv)
+        df.to_csv(results_csv_path, index=False)
+
         return  # Exit after evaluating the baseline model
 
     os.makedirs(FLAGS.save_dir, exist_ok=True)
