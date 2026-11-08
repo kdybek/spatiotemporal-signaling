@@ -177,6 +177,12 @@ def main(_):
         )
     )
 
+    os.makedirs(FLAGS.save_dir, exist_ok=True)
+    flags_dict = FLAGS.flag_values_dict()
+
+    with open(os.path.join(FLAGS.save_dir, "config.json"), "w") as f:
+        json.dump(flags_dict, f, indent=4)
+
     if FLAGS.baseline_model:
         baseline_model = BaselinePatcher(patch_size=(16, 16))
         eval_key, rng_key = jax.random.split(rng_key)
@@ -200,12 +206,6 @@ def main(_):
         df.to_csv(results_csv_path, index=False)
 
         return  # Exit after evaluating the baseline model
-
-    os.makedirs(FLAGS.save_dir, exist_ok=True)
-    flags_dict = FLAGS.flag_values_dict()
-
-    with open(os.path.join(FLAGS.save_dir, "config.json"), "w") as f:
-        json.dump(flags_dict, f, indent=4)
 
     model = get_rvm(
         num_channels=len(FLAGS.channel_names.split()),
