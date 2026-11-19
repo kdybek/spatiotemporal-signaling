@@ -18,7 +18,7 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string("run_group", "Debug", "Run group.")
 flags.DEFINE_integer("seed", 0, "Random seed.")
 
-flags.DEFINE_integer("sampling_epochs", 10_000, "Number of sampling epochs.")
+flags.DEFINE_integer("sampling_epochs", 100, "Number of sampling epochs.")
 
 flags.DEFINE_string("dataset_path", "toy_dataset.zarr", "Path to the train dataset.")
 
@@ -76,6 +76,10 @@ def visualize(
             metrics[
                 f"visualizations"
             ].append(wandb.Image(image, caption=f"{experiment_name} - {channel_names[channel_ind]}"))
+
+    for key in metrics:
+        if len(metrics[key]) > 100:
+            metrics[key] = random.sample(metrics[key], 100)
 
     return metrics
 
@@ -190,7 +194,7 @@ def main(_):
                 all_channel_inds.append(channel_inds)
                 all_experiment_names.append(experiment_name)
 
-        if epoch % 100 == 0:
+        if epoch % 1 == 0:
             metrics = {}
 
             for channel_name, stats in channel_stats.items():
