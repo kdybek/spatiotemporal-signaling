@@ -343,7 +343,7 @@ class DummyDataset():
         video = np.random.rand(self.clip_frames, len(self.channel_names_list), self.clip_size, self.clip_size).astype("float32")
         video = np.clip(video, 0, 1)
         channel_inds = np.arange(len(self.channel_names_list) - 1)  # Dummy channel indices
-        metadata = {"Cell_type": f"{idx%3}", "Inhibitor": f"{idx%4}"}  # Dummy metadata
+        metadata = {"Cell_type": f"{idx%3}", "Inhibitor": f"{idx%4}", "Path": f"video_{idx%5}"}  # Dummy metadata
 
         if self.downstream:
             # Generate dummy clips for downstream evaluation
@@ -366,7 +366,7 @@ class DummyDataset():
 
     def get_all_metadata(self):
         return [
-            {"Cell_type": f"{i%3}", "Inhibitor": f"{i%4}"} for i in range(len(self))
+            {"Cell_type": f"{i%3}", "Inhibitor": f"{i%4}", "Path": f"video_{i%5}"} for i in range(len(self))
         ]  # Dummy metadata for all items
 
 
