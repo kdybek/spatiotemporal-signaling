@@ -18,7 +18,7 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string("run_group", "Debug", "Run group.")
 flags.DEFINE_integer("seed", 0, "Random seed.")
 
-flags.DEFINE_integer("sampling_epochs", 1_000, "Number of sampling epochs.")
+flags.DEFINE_integer("sampling_epochs", 10_000, "Number of sampling epochs.")
 
 flags.DEFINE_string("dataset_path", "toy_dataset.zarr", "Path to the train dataset.")
 
