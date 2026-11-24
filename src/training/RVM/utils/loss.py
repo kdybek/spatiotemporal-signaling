@@ -5,14 +5,14 @@ import optax
 
 def masked_rank(x, mask, axis):
     """
-    Compute ranks along axis while ignoring masked-out values.
+    Compute average ranks along axis (tied values share their mean rank) while ignoring
+    masked-out values. Ranks are computed in float32 regardless of the input dtype.
     """
-    x_masked = jnp.where(mask > 0, x, jnp.inf)
+    # Masked-out entries are all +inf: they tie among themselves and rank after every
+    # valid entry, so they do not affect the ranks of the valid entries.
+    x_masked = jnp.where(mask > 0, x.astype(jnp.float32), jnp.inf)
 
-    ranks = jnp.argsort(
-        jnp.argsort(x_masked, axis=axis),
-        axis=axis
-    ).astype(x.dtype)
+    ranks = jax.scipy.stats.rankdata(x_masked, method="average", axis=axis)
 
     return ranks * mask
 
@@ -25,7 +25,7 @@ def spearman_correlation(x, y, mask, axis, eps=1e-8):
         x: input tensor
         y: target tensor
         mask: binary mask with same shape as x/y
-        axis: axes over which to compute correlation.
+        axis: single axis over which to compute correlation.
               If None, flatten everything.
         eps: numerical stability constant
 
@@ -33,7 +33,8 @@ def spearman_correlation(x, y, mask, axis, eps=1e-8):
         scalar mean Spearman correlation
     """
     if axis is None:
-        axis = tuple(range(x.ndim))
+        x, y, mask = x.reshape(-1), y.reshape(-1), mask.reshape(-1)
+        axis = 0
 
     # Rank the values
     x_ranked = masked_rank(x, mask, axis=axis)
