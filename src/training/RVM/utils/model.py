@@ -809,7 +809,7 @@ class VideoSiamMAE(nn.Module):
         else:
             source_tokens = einops.rearrange(source_tokens, "... c h w D -> ... (c h w) D")
 
-        # Mask target tokens (masks are shared across the channel dimension)
+        # Mask target tokens (independent mask per channel, i.e. NOT shared across the channel dimension)
         target_tokens_flat = einops.rearrange(target_tokens, "... h w D -> ... (h w) D")
         rng_key, tgt_mask_key = jax.random.split(rng_key)
         visible_target, inds_restore, mask = random_masking_with_shared_dim(
@@ -1029,39 +1029,36 @@ def get_optimizer(
     total_steps,
     grad_accumulation_steps,
 ):
-    warmup_schedule = optax.linear_schedule(
+    """AdamW with true gradient accumulation.
+
+    The gradients of `grad_accumulation_steps` consecutive micro-batches are averaged;
+    the mean gradient is clipped to global norm 1.0 and a single AdamW step is taken.
+    On the other calls the returned updates are zero (params stay unchanged).
+
+    `warmup_steps` and `total_steps` are given in micro-batches (calls to `update`)
+    and converted here to optimizer updates, which is what the LR schedule counts.
+    """
+    k = grad_accumulation_steps
+    warmup_updates = warmup_steps // k
+    total_updates = max(total_steps // k, warmup_updates + 1)
+
+    schedule = optax.warmup_cosine_decay_schedule(
         init_value=0.0,
-        end_value=base_lr,
-        transition_steps=warmup_steps,
+        peak_value=base_lr,
+        warmup_steps=warmup_updates,
+        decay_steps=total_updates,  # includes the warmup phase
+        end_value=0.0,
     )
 
-    cosine_schedule = optax.cosine_decay_schedule(
-        init_value=base_lr,
-        decay_steps=total_steps - warmup_steps,
-    )
-
-    schedule = optax.join_schedules(
-        schedules=[
-            warmup_schedule,
-            cosine_schedule,
-        ],
-        boundaries=[
-            warmup_steps,
-        ],
-    )
-
-    adamw = optax.adamw(
-        learning_rate=schedule,
-        weight_decay=0.05,
-        b1=0.9,
-        b2=0.95,
-        eps=1e-8,
-    )
-
-    optimizer = optax.chain(
+    inner_optimizer = optax.chain(
         optax.clip_by_global_norm(1.0),
-        adamw,
-        optax.apply_every(k=grad_accumulation_steps),
+        optax.adamw(
+            learning_rate=schedule,
+            weight_decay=0.05,
+            b1=0.9,
+            b2=0.95,
+            eps=1e-8,
+        ),
     )
 
-    return optimizer
+    return optax.MultiSteps(inner_optimizer, every_k_schedule=k)

@@ -158,7 +158,7 @@ def update_model(
         mask = mask.repeat(patch_scaling_factor_w, axis=-2)
 
         mse_loss, spearman_corr, pearson_corr = reconstruction_metrics(
-            reconstructed, targets_, channel_inds, mask, var_scaled_loss
+            reconstructed, targets_, mask, var_scaled_loss
         )
 
         return mse_loss, {

@@ -35,7 +35,9 @@ def compute_outputs(
     max_offset,
     batch_size,
     eval_steps,
+    var_scaled_loss,
     rng_key,
+    max_vis_samples=8,
 ):
     @jax.jit
     def forward(sources, targets, channel_inds, target_deltas, rng):
@@ -76,12 +78,25 @@ def compute_outputs(
 
         output["mask"] = mask
 
+        mse_loss, spearman_corr, pearson_corr = reconstruction_metrics(
+            output["reconstructed"], output["targets"], mask, var_scaled_loss
+        )
+        output["metrics"] = {
+            "loss": mse_loss,
+            "spearman_correlation": spearman_corr,
+            "pearson_correlation": pearson_corr,
+        }
+
         return output
 
+    # Only the first max_vis_samples samples are kept for visualization; metrics are
+    # accumulated per batch (weighted by batch size) to avoid holding the whole eval set in memory.
     reconstruced = []
     masks = []
     targets = []
     channel_inds = []
+    metric_sums = defaultdict(float)
+    num_samples = 0
     step = 1
     while step <= eval_steps:
         loader = batch_iterator(test_dataset, batch_size=batch_size)
@@ -93,10 +108,17 @@ def compute_outputs(
             eval_key, rng_key = jax.random.split(rng_key)
             output = forward(src, tgt, channel_inds_, offsets, rng=eval_key)
 
-            reconstruced.extend(np.array(output["reconstructed"]))
-            masks.extend(np.array(output["mask"]))
-            targets.extend(np.array(output["targets"]))
-            channel_inds.extend(np.array(channel_inds_))
+            n = clips.shape[0]
+            for k, v in output["metrics"].items():
+                metric_sums[k] += float(v) * n
+            num_samples += n
+
+            n_keep = max_vis_samples - len(reconstruced)
+            if n_keep > 0:
+                reconstruced.extend(np.array(output["reconstructed"][:n_keep]))
+                masks.extend(np.array(output["mask"][:n_keep]))
+                targets.extend(np.array(output["targets"][:n_keep]))
+                channel_inds.extend(np.array(channel_inds_[:n_keep]))
 
             step += 1
             if step > eval_steps:
@@ -107,11 +129,16 @@ def compute_outputs(
     targets = np.array(targets)
     channel_inds = np.array(channel_inds)
 
+    metrics = {
+        f"{EVAL_SUBFOLDER}/{k}": v / max(num_samples, 1) for k, v in metric_sums.items()
+    }
+
     return {
         "reconstructed": reconstruced,
         "masks": masks,
         "targets": targets,
         "channel_inds": channel_inds,
+        "metrics": metrics,
     }
 
 
@@ -203,18 +230,6 @@ def evaluate_probing(features, labels, cv=5):
     }
 
 
-def evaluate_reconstruction(reconstructed, targets, masks, var_scaled_loss):
-    mse_loss, spearman_corr, pearson_corr = reconstruction_metrics(
-        reconstructed, targets, masks, var_scaled_loss
-    )
-
-    return {
-        f"{EVAL_SUBFOLDER}/loss": mse_loss,
-        f"{EVAL_SUBFOLDER}/spearman_correlation": spearman_corr,
-        f"{EVAL_SUBFOLDER}/pearson_correlation": pearson_corr,
-    }
-
-
 def partial_evaluation(
     model,
     test_dataset,
@@ -241,6 +256,7 @@ def partial_evaluation(
         max_offset,
         batch_size,
         eval_steps,
+        var_scaled_loss,
         rng_key,
     )
 
@@ -250,9 +266,7 @@ def partial_evaluation(
     channel_inds = outputs["channel_inds"]
 
     metrics = {}
-    metrics.update(
-        evaluate_reconstruction(reconstructed=reconstructed, targets=targets, masks=masks, var_scaled_loss=var_scaled_loss)
-    )
+    metrics.update(outputs["metrics"])
     metrics.update(
         visualize_reconstructions(
             reconstructed=reconstructed,
@@ -362,6 +376,7 @@ def downstream_evaluation(
         if f"test_{num_frames}frames" not in downstream_datasets:
             raise ValueError(f"Missing test dataset for {num_frames} frames.")
 
+        ds_key, rng_key = jax.random.split(rng_key)
         m, r = downstream_evaluation_(
             foundation_model,
             foundation_model_params,
@@ -376,7 +391,7 @@ def downstream_evaluation(
             main_training_step,
             full_eval,
             num_frames,
-            rng_key,
+            ds_key,
         )
         metrics.update(m)
         results_csv.extend(r)
@@ -424,12 +439,13 @@ def downstream_evaluation_(
             print(f"Train classes: {classes_train}")
             print(f"Test classes: {classes_test}")
 
-        class_to_index = {cls: idx for idx, cls in enumerate(classes_train)}
-        num_classes = len(classes_train)
+        all_classes = sorted(set(classes_train) | set(classes_test))
+        class_to_index = {cls: idx for idx, cls in enumerate(all_classes)}
+        num_classes = len(all_classes)
 
         print(f"Downstream evaluation for target: {target}")
         print(f"Number of classes: {num_classes}")
-        print(f"Classes: {classes_train}")
+        print(f"Classes: {all_classes}")
 
         downstream_model = AttentionPoolingClassifier(num_classes) if target not in ["order_same_loc", "order_diff_loc"] else AttentionPoolingOrderClassifier()
 
@@ -686,7 +702,7 @@ def downstream_evaluation_(
         return metrics, results_csv
 
     eval_key, rng_key = jax.random.split(rng_key)
-    metrics = eval(eval_key, train_step=0)
+    metrics, results_csv = eval(eval_key, train_step=0)
 
     train_step = 1
     while train_step <= downstream_train_steps:

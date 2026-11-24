@@ -1,3 +1,5 @@
+import functools
+import re
 import yaml
 import numpy as np
 from tqdm import tqdm
@@ -40,7 +42,7 @@ flags.DEFINE_integer("downstream_eval_steps", 250, "Number of steps for downstre
 
 flags.DEFINE_string("dataset_path", "toy_dataset.zarr", "Path to the train dataset.")
 flags.DEFINE_string(
-    "downsteam_dataset_split_config",
+    "downstream_dataset_split_config",
     "downstream_split.yaml",
     "Path to the downstream dataset split config file.",
 )
@@ -107,13 +109,19 @@ flags.DEFINE_boolean("eval_only", False, "Whether to only run evaluation without
 
 flags.DEFINE_boolean("baseline_model", False, "Whether to use a naive baseline model.")
 
+flags.register_validator(
+    "max_offset",
+    lambda v: v < 64,
+    message="max_offset must be < 64 (one_hot size of target_deltas in VideoSiamMAE)",
+)
+
 
 def set_seed(seed):
     # Python
     random.seed(seed)
-    os.environ["PYTHONHASHSEED"] = str(seed)
 
-    # NumPy
+    # NumPy. Note: batch_iterator's worker threads draw from this shared state in
+    # nondeterministic order, so data sampling is not reproducible across runs.
     np.random.seed(seed)
 
 
@@ -142,9 +150,15 @@ def initialize_model(model, rng_key):
     return params
 
 
-def load_checkpoint(checkpointer, checkpoint_path):
-    state = checkpointer.restore(os.path.abspath(checkpoint_path))
-    return state["params"], state["opt_state"], state["step"]
+def load_checkpoint(checkpointer, checkpoint_path, target):
+    state = checkpointer.restore(
+        os.path.abspath(checkpoint_path),
+        args=ocp.args.PyTreeRestore(
+            item=target,
+            restore_args=ocp.checkpoint_utils.construct_restore_args(target),
+        ),
+    )
+    return state["params"], state["opt_state"], int(state["step"])
 
 
 def main(_):
@@ -163,7 +177,7 @@ def main(_):
         per_frame_butterworth=FLAGS.per_frame_butterworth,
     )
 
-    downstream_split_config = load_split_config(FLAGS.downsteam_dataset_split_config)
+    downstream_split_config = load_split_config(FLAGS.downstream_dataset_split_config)
 
     train_dataset, val_dataset, downstream_datasets = (
         create_train_val_datasets(
@@ -226,13 +240,26 @@ def main(_):
 
     checkpointer = ocp.Checkpointer(ocp.PyTreeCheckpointHandler())
 
+    init_key, rng_key = jax.random.split(rng_key)
+    params = initialize_model(model, init_key)
+    opt_state = optimizer.init(params)
+    step = 0
     if FLAGS.checkpoint_path is not None:
-        params, opt_state, step = load_checkpoint(checkpointer, FLAGS.checkpoint_path)
-    else:
-        init_key, rng_key = jax.random.split(rng_key)
-        params = initialize_model(model, init_key)
-        opt_state = optimizer.init(params)
-        step = 0
+        params, opt_state, step = load_checkpoint(
+            checkpointer,
+            FLAGS.checkpoint_path,
+            {"step": step, "params": params, "opt_state": opt_state},
+        )
+
+    later = [
+        d for d in os.listdir(FLAGS.save_dir)
+        if (m := re.fullmatch(r"checkpoint_(\d+)", d)) and int(m.group(1)) > step
+    ]
+    if later and not FLAGS.eval_only:
+        raise ValueError(
+            f"{FLAGS.save_dir} already has checkpoints past step {step}: "
+            f"{sorted(later)}. Use a new --save_dir."
+        )
 
     eval_key, rng_key = jax.random.split(rng_key)
     init_metrics = partial_evaluation(
@@ -277,7 +304,7 @@ def main(_):
 
     step += 1
 
-    @jax.jit
+    @functools.partial(jax.jit, static_argnames=("var_scaled_loss",))
     def training_step(
         params,
         opt_state,
@@ -370,7 +397,7 @@ def main(_):
 
             if step % FLAGS.downstream_interval == 0:
                 downstream_eval_key, rng_key = jax.random.split(rng_key)
-                downstream_metrics = downstream_evaluation(
+                downstream_metrics, results_csv = downstream_evaluation(
                     foundation_model=model,
                     foundation_model_params=params,
                     downstream_datasets=downstream_datasets,
@@ -381,6 +408,7 @@ def main(_):
                     base_lr=FLAGS.learning_rate,
                     grad_accumulation_steps=FLAGS.grad_accumulation_steps,
                     main_training_step=step,
+                    full_eval=False,
                     rng_key=downstream_eval_key,
                 )
                 metrics.update(downstream_metrics)

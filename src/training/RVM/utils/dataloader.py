@@ -15,7 +15,7 @@ def percentile_norm(video):
     for c in range(video.shape[1]):  # per channel
         p1, p99 = np.percentile(video[:, c], (1, 99))
         video[:, c] = np.clip(video[:, c], p1, p99)
-        video[:, c] = (video[:, c] - p1) / (p99 - p1)
+        video[:, c] = (video[:, c] - p1) / max(p99 - p1, 1e-8)
 
     return video
 
@@ -493,6 +493,13 @@ def create_train_val_datasets(
     return train_dataset, val_dataset, downstream_datasets
 
 
+class _WorkerError:
+    """Wraps an exception raised in a batch_iterator worker so it can be re-raised by the consumer."""
+
+    def __init__(self, exc):
+        self.exc = exc
+
+
 def batch_iterator(
     dataset,
     batch_size,
@@ -508,7 +515,10 @@ def batch_iterator(
     stop = Event()
 
     def worker(idx):
-        item = dataset[idx]
+        try:
+            item = dataset[idx]
+        except Exception as e:
+            item = _WorkerError(e)
 
         while not stop.is_set():
             try:
@@ -527,6 +537,9 @@ def batch_iterator(
                 n = min(batch_size, remaining)
 
                 samples = [queue.get() for _ in range(n)]
+                for s in samples:
+                    if isinstance(s, _WorkerError):
+                        raise s.exc
                 remaining -= n
 
                 if isinstance(samples[0], dict):
@@ -606,7 +619,7 @@ def prepare_rvm_src_tgt_pairs(
         size=(B,),
     )
 
-    src_idx = init_src_idx[:, None] + jnp.arange(src_frames)[None, :]
+    src_idx = init_src_idx[:, None] + np.arange(src_frames)[None, :]
     src_batch = clip_batch[np.arange(B)[:, None], src_idx]
 
     offsets = np.random.randint(
