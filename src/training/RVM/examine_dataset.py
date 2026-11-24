@@ -36,7 +36,8 @@ flags.DEFINE_string(
 flags.DEFINE_string(
     "transforms",
     "arcsinh butterworth",
-    "Space-separated list of transforms to apply to the videos. Supported: percentile_norm, arcsinh, log1p, butterworth.",
+    "Space-separated list of transforms to apply to the videos. Supported: percentile_norm, arcsinh, "
+    "log1p, butterworth, global_norm, experiment_norm.",
 )
 flags.DEFINE_float("arcsinh_cofactor", 5.0, "Cofactor for arcsinh transform.")
 flags.DEFINE_float(
@@ -136,6 +137,7 @@ def main(_):
         butterworth_cutoff=FLAGS.butterworth_cutoff,
         butterworth_order=FLAGS.butterworth_order,
         per_frame_butterworth=FLAGS.per_frame_butterworth,
+        channel_names_list=FLAGS.channel_names.split(),
     )
 
     dummy_downstream_split_config = {

@@ -1,3 +1,4 @@
+import os
 import zarr
 import numpy as np
 import jax.numpy as jnp
@@ -6,6 +7,8 @@ import math
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue, Full
 from threading import Event
+
+from utils.normalization_stats import GLOBAL_CHANNEL_STATS, EXPERIMENT_CHANNEL_STATS
 
 
 DOWNSTREAM_EVAL_FRAMES = 4  # Number of frames to use for downstream evaluation (ugly constant for now)
@@ -18,6 +21,16 @@ def percentile_norm(video):
         video[:, c] = (video[:, c] - p1) / max(p99 - p1, 1e-8)
 
     return video
+
+
+def experiment_name_from_metadata(metadata):
+    """Experiment name = last component of metadata["Path"]."""
+    return os.path.basename(os.path.normpath(metadata["Path"]))
+
+
+def stats_norm(video, mean, std):
+    """Standardize each channel of a (T, C, H, W) video with per-channel mean / std arrays of shape (C,)."""
+    return (video - mean[None, :, None, None]) / std[None, :, None, None]
 
 
 def butterworth_filter(video, cutoff, order, per_frame):
@@ -170,18 +183,76 @@ def get_clip(
         }
 
 
+STATS_NORM_TRANSFORMS = ("global_norm", "experiment_norm")
+
+
 class TransformPipeline:
-    def __init__(self, transform_names_list, arcsinh_cofactor, butterworth_cutoff, butterworth_order, per_frame_butterworth):
+    def __init__(
+        self,
+        transform_names_list,
+        arcsinh_cofactor,
+        butterworth_cutoff,
+        butterworth_order,
+        per_frame_butterworth,
+        channel_names_list=None,
+    ):
+        """
+        Args:
+            transform_names_list: Transforms applied in order. Supported: percentile_norm, arcsinh,
+                log1p, butterworth, global_norm, experiment_norm.
+                global_norm / experiment_norm standardize each channel with the dataset-wide /
+                per-experiment statistics from utils/normalization_stats.py. Those statistics were
+                computed after "arcsinh butterworth", so use them as the last step of that pipeline.
+            channel_names_list: Channel order of the videos (C axis). Required for global_norm and
+                experiment_norm.
+        """
         self.transform_names_list = transform_names_list
         self.arcsinh_cofactor = arcsinh_cofactor
         self.butterworth_cutoff = butterworth_cutoff
         self.butterworth_order = butterworth_order
         self.per_frame_butterworth = per_frame_butterworth
+        self.channel_names_list = channel_names_list
 
-    def __call__(self, video):
+        if any(name in STATS_NORM_TRANSFORMS for name in transform_names_list):
+            if channel_names_list is None:
+                raise ValueError(
+                    f"channel_names_list is required for the {STATS_NORM_TRANSFORMS} transforms."
+                )
+            unknown = [name for name in channel_names_list if name not in GLOBAL_CHANNEL_STATS]
+            if unknown:
+                raise ValueError(f"No normalization statistics for channels {unknown}.")
+
+            self.global_mean, self.global_std = self._stats_arrays(GLOBAL_CHANNEL_STATS)
+            # Channels not recorded in an experiment fall back to the global statistics. Their
+            # (placeholder) data is never fed to the model, since channel_inds excludes them.
+            self.experiment_stats = {
+                experiment: self._stats_arrays({**GLOBAL_CHANNEL_STATS, **channel_stats})
+                for experiment, channel_stats in EXPERIMENT_CHANNEL_STATS.items()
+            }
+
+    def _stats_arrays(self, channel_stats):
+        mean = np.array([channel_stats[name]["mean"] for name in self.channel_names_list], dtype=np.float32)
+        std = np.array([channel_stats[name]["std"] for name in self.channel_names_list], dtype=np.float32)
+        return mean, std
+
+    def __call__(self, video, metadata=None):
+        """
+        Args:
+            video: (T, C, H, W) array, channels ordered as channel_names_list.
+            metadata: The video's metadata dict. Required for experiment_norm.
+        """
         for transform_name in self.transform_names_list:
             if transform_name == 'percentile_norm':
                 video = percentile_norm(video)
+            elif transform_name == 'global_norm':
+                video = stats_norm(video, self.global_mean, self.global_std)
+            elif transform_name == 'experiment_norm':
+                if metadata is None:
+                    raise ValueError("experiment_norm requires the video metadata.")
+                experiment = experiment_name_from_metadata(metadata)
+                if experiment not in self.experiment_stats:
+                    raise KeyError(f"No normalization statistics for experiment '{experiment}'.")
+                video = stats_norm(video, *self.experiment_stats[experiment])
             elif transform_name == 'arcsinh':
                 video = np.arcsinh(video / self.arcsinh_cofactor)
             elif transform_name == 'log1p':
@@ -233,8 +304,10 @@ class ZarrVideoDataset():
             self.random_crop,
         )
 
+        metadata = self.root[video_name].attrs["Metadata"]
+
         video = video.astype("float32")
-        video = self.transform_pipeline(video)
+        video = self.transform_pipeline(video, metadata)
 
         if self.augment:
             # Random horizontal flip
@@ -244,8 +317,6 @@ class ZarrVideoDataset():
             # Random vertical flip
             if np.random.rand() < 0.5:
                 video = video[:, :, ::-1, :].copy()
-
-        metadata = self.root[video_name].attrs["Metadata"]
 
         return video, channel_inds, metadata
 
@@ -299,14 +370,14 @@ class ZarrVideoDownstreamDataset():
         t2 = out["t2"]
         channel_inds = out["channel_inds"]
 
+        metadata = self.root[video_name].attrs["Metadata"]
+
         clip = clip.astype("float32")
         clip_same_loc_t2 = clip_same_loc_t2.astype("float32")
         clip_diff_loc_t2 = clip_diff_loc_t2.astype("float32")
-        clip = self.transform_pipeline(clip)
-        clip_same_loc_t2 = self.transform_pipeline(clip_same_loc_t2)
-        clip_diff_loc_t2 = self.transform_pipeline(clip_diff_loc_t2)
-
-        metadata = self.root[video_name].attrs["Metadata"]
+        clip = self.transform_pipeline(clip, metadata)
+        clip_same_loc_t2 = self.transform_pipeline(clip_same_loc_t2, metadata)
+        clip_diff_loc_t2 = self.transform_pipeline(clip_diff_loc_t2, metadata)
 
         return {
             "clip": clip,
